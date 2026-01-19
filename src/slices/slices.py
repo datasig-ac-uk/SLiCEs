@@ -6,25 +6,25 @@ import torch.nn as nn
 
 class SLiCE(nn.Module):
     """
-    A structured linear controlled differential equation (slice) layer.
+    A structured linear controlled differential equation (SLiCE) layer.
 
-    Given a sequence of values (or increments) X_i in R^D for i=0,...,T, a slice
-    layer computes a sequence of hidden states y_i in R^H for i=0,...,T via the
+    Given a sequence of values (or increments) X_i in R^D for i=1,...,T, a SLiCE
+    layer computes a sequence of hidden states y_i in R^H for i=1,...,T via the
     recurrence:
-        y_i = y_{i-1} + A(X_i) y_{i-1} + B(X_i)   for i=0,...,T,
-    where A: R^D -> R^{H x H} and B: R^D -> R^H are learnt linear functions and y_{-1}
+        y_i = y_{i-1} + A(X_i) y_{i-1} + B(X_i)   for i=1,...,T,
+    where A: R^D -> R^{H x H} and B: R^D -> R^H are learnt linear functions and y_{0}
     is learnt.
 
     Args:
         input_dim (int): Dimensionality of the input features at each time step.
         hidden_dim (optional[int]): Dimensionality of the hidden state. If None, set to
                                     input_dim.
+        bias (bool): If True, include the bias term B(X_i) in the recurrence.
         block_size (int): The size of the blocks along the diagonal of A.
-        diagonal_dense (bool): If True, A is composed of a diagonal matrix and a dense
-                               block.
+        diagonal_dense (bool): If True, A is composed of a diagonal matrix and a single
+                               dense block of size block_size x block_size.
         init_std (float): Standard deviation for vector field initialisation.
         scale (float): Scaling factor applied to the input.
-
 
     Shape:
         - Input: (batch_size, seq_len, input_dim)
@@ -45,29 +45,39 @@ class SLiCE(nn.Module):
 
         if hidden_dim is None:
             hidden_dim = input_dim
+        if block_size < 1:
+            raise ValueError("block_size must be at least 1.")
         if not diagonal_dense and hidden_dim % block_size != 0:
             raise ValueError("hidden_dim must be divisible by block_size.")
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.bias = bias
         self.block_size = block_size
-        self.diagonal_dense = diagonal_dense
         self.init_std = init_std
         self.scale = scale
 
-        # Define initialisation layer
+        if diagonal_dense and self.block_size == self.hidden_dim:
+            self.diagonal_dense = (
+                False  # No point in diagonal + dense if only one block
+            )
+        elif diagonal_dense and self.block_size == 1:
+            self.diagonal_dense = False  # No point in diagonal + dense if no dense part
+        else:
+            self.diagonal_dense = diagonal_dense
+
+        # Define learnt initial hidden state y_0
         self.init = torch.nn.Parameter(torch.randn(self.hidden_dim) * self.init_std)
 
-        if diagonal_dense:
+        if self.diagonal_dense:
             # For diagonal + dense block structure, define separate parameters
             # for the diagonal and dense parts.
-            self.vf_A_diag = torch.nn.Parameter(
-                torch.randn(self.input_dim + 2, self.hidden_dim - self.block_size)
-                * self.init_std
+            self.vf_A_diag = nn.Linear(
+                self.input_dim + 2, self.hidden_dim - self.block_size, bias=False
             )
             self.vf_A_dense = nn.Linear(
                 self.input_dim + 2, self.block_size * self.block_size, bias=False
             )
+            nn.init.normal_(self.vf_A_diag.weight, mean=0.0, std=self.init_std)
             nn.init.normal_(self.vf_A_dense.weight, mean=0.0, std=self.init_std)
         else:
             # Define the vector field A as a linear layer
@@ -104,7 +114,7 @@ class SLiCE(nn.Module):
         inp = inp * self.scale
 
         # Initialise the hidden state
-        y0 = self.init.unsqueeze(0).expand(
+        y = self.init.unsqueeze(0).expand(
             batch_size, -1
         )  # shape: (batch_size, hidden_dim)
 
@@ -112,14 +122,13 @@ class SLiCE(nn.Module):
         ys = torch.zeros(
             batch_size, seq_len, self.hidden_dim, device=X.device, dtype=X.dtype
         )
-        y = y0
 
         # Recurrently compute the hidden states
         for i in range(seq_len):
             if self.diagonal_dense:
                 y_diag = y[:, : -self.block_size]
                 y_dense = y[:, -self.block_size :]
-                diag_state_transition = (inp[:, i] @ self.vf_A_diag) * y_diag
+                diag_state_transition = self.vf_A_diag(inp[:, i]) * y_diag
                 A = self.vf_A_dense(inp[:, i])
                 dense_state_transition = torch.einsum(
                     "bij,bj->bi",
@@ -163,9 +172,10 @@ class SLiCEBlock(nn.Module):
     A residual block wrapping a SLiCE. Includes:
       1. SLiCE forward pass
       2. Residual connection
-      3. (Optional) a Linear→GLU stage
-      4. LayerNorm
-      5. Dropout
+      3. A Linear→GLU (or tanh) stage
+      4. Residual connection
+      5. LayerNorm
+      6. Dropout
 
     The output dimension of the SLiCE is the same as the input dimension to preserve
     shape for the residual.
@@ -290,7 +300,7 @@ class StackedSLiCE(nn.Module):
         bias: bool = True,
         tokens: bool = True,
         block_size: int = 4,
-        diagonal_dense=False,
+        diagonal_dense: bool = False,
         init_std: float = 1.0,
         dropout_rate: float = 0.01,
         use_glu: bool = False,

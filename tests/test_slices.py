@@ -30,6 +30,11 @@ def test_slice_raises_if_hidden_dim_not_divisible_by_block_size():
         SLiCE(input_dim=5, hidden_dim=6, block_size=4)
 
 
+def test_slice_raises_if_block_size_less_than_one():
+    with pytest.raises(ValueError, match="block_size must be at least 1"):
+        SLiCE(input_dim=3, hidden_dim=3, block_size=0)
+
+
 # -----------------------
 # SLiCE: forward paths
 # -----------------------
@@ -96,7 +101,7 @@ def test_slice_forward_diagonal_dense_bias_true_with_grads():
     # Gradient check: ensure both vf_A_diag and vf_A_dense participate
     y.mean().backward()
     assert x.grad is not None
-    assert m.vf_A_diag.grad is not None
+    assert m.vf_A_diag.weight.grad is not None
     assert m.vf_A_dense.weight.grad is not None
     _assert_grads_exist(m)
 
