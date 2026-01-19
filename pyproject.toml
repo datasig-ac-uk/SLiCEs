@@ -20,4 +20,15 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry.group.dev.dependencies]
 ruff = "^0.14.13"
 pre-commit = "^4.5.1"
+pytest = "^9.0.2"
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/slices/__init__.py" = ["F401"]
 
