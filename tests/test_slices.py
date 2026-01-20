@@ -50,7 +50,6 @@ def test_slice_forward_block_diagonal_block_size_gt1_bias_true_with_grads():
         block_size=2,
         diagonal_dense=False,
         bias=True,
-        scale=0.1,
     )
 
     y = m(x)
@@ -74,7 +73,6 @@ def test_slice_forward_block_size_one_bias_false():
         block_size=1,
         diagonal_dense=False,
         bias=False,  # covers bias-off path
-        scale=0.2,
     )
     y = m(x)
     assert y.shape == (2, 4, 3)
@@ -91,7 +89,6 @@ def test_slice_forward_diagonal_dense_bias_true_with_grads():
         block_size=4,
         diagonal_dense=True,
         bias=True,
-        scale=0.05,
     )
 
     y = m(x)
@@ -116,7 +113,6 @@ def test_slice_diagonal_dense_edge_case_hidden_dim_equals_block_size():
         block_size=2,
         diagonal_dense=True,
         bias=False,
-        scale=0.3,
     )
 
     y = m(x)
@@ -133,30 +129,10 @@ def test_slice_diagonal_dense_block_size_one_runs():
         block_size=1,
         diagonal_dense=True,
         bias=True,
-        scale=0.1,
     )
     y = m(x)
     assert y.shape == (2, 4, 3)
     _assert_no_nan(y)
-
-
-def test_slice_scale_zero_freezes_dynamics_when_bias_is_linear_no_intercept():
-    # With scale=0 and vf_B linear (bias=False in nn.Linear),
-    # inp becomes all zeros => vf_A(inp)=0 and vf_B(inp)=0.
-    # So y should remain constant after initialization.
-    x = _rand_x(batch=2, seq=5, dim=4, seed=6)
-
-    m = SLiCE(
-        input_dim=4,
-        hidden_dim=4,
-        block_size=2,
-        diagonal_dense=False,
-        bias=True,
-        scale=0.0,
-    )
-    y = m(x)
-    # Every timestep should equal the first
-    assert torch.allclose(y[:, 1:], y[:, :1].expand_as(y[:, 1:]))
 
 
 # -----------------------
@@ -253,7 +229,6 @@ def test_slice_trainable_init_input_dim2_four_basis_matrices_example():
         block_size=2,
         diagonal_dense=False,
         bias=False,
-        scale=1.0,
     )
     m.eval()
 
@@ -268,10 +243,10 @@ def test_slice_trainable_init_input_dim2_four_basis_matrices_example():
         # Flatten order is row-major per block:
         # [b1_00, b1_01, b1_10, b1_11,  b2_00, b2_01, b2_10, b2_11]
         A1_flat = torch.tensor(
-            [0.10, 0.00, 0.00, -0.10, 0.05, 0.02, 0.00, 0.03], dtype=m.vf_A.weight.dtype
+            [0.40, 0.00, 0.00, -0.40, 0.2, 0.08, 0.00, 0.12], dtype=m.vf_A.weight.dtype
         )  # inc
         A2_flat = torch.tensor(
-            [0.00, 0.05, 0.00, 0.00, -0.02, 0.00, 0.04, 0.01], dtype=m.vf_A.weight.dtype
+            [0.00, 0.2, 0.00, 0.00, -0.08, 0.00, 0.16, 0.04], dtype=m.vf_A.weight.dtype
         )  # ts
         A3_flat = torch.tensor(
             [0.20, -0.10, 0.10, 0.00, 0.00, 0.03, -0.01, 0.05],
@@ -289,10 +264,10 @@ def test_slice_trainable_init_input_dim2_four_basis_matrices_example():
     X = torch.tensor(
         [
             [
-                [1.0, -1.0],
-                [0.5, 2.0],
-                [-1.0, 1.5],
-                [2.0, 0.0],
+                [4.0, -4.0],
+                [2.0, 8.0],
+                [-4.0, 6.0],
+                [8.0, 0.0],
             ]
         ],
         dtype=torch.float32,
