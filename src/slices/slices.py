@@ -38,8 +38,7 @@ class SLiCE(nn.Module):
         bias: bool = True,
         block_size: int = 4,
         diagonal_dense: bool = False,
-        init_std: float = 1.0,
-        scale: float = 1.0 / 40,
+        init_std: float = 0.01,
     ):
         super().__init__()
 
@@ -54,7 +53,6 @@ class SLiCE(nn.Module):
         self.bias = bias
         self.block_size = block_size
         self.init_std = init_std
-        self.scale = scale
 
         if diagonal_dense and self.block_size == self.hidden_dim:
             self.diagonal_dense = (
@@ -111,7 +109,7 @@ class SLiCE(nn.Module):
         inp = torch.cat((inc_ts, ts, X), dim=-1)  # shape: (batch_size, seq_len, x_dim)
 
         # Scale inputs
-        inp = inp * self.scale
+        inp = inp / seq_len
 
         # Initialise the hidden state
         y = self.init.unsqueeze(0).expand(
@@ -201,7 +199,7 @@ class SLiCEBlock(nn.Module):
         bias: bool = True,
         block_size: int = 4,
         diagonal_dense: bool = False,
-        init_std: float = 1.0,
+        init_std: float = 0.01,
         dropout_rate: float = 0.01,
         use_glu: bool = False,
     ):
@@ -301,7 +299,7 @@ class StackedSLiCE(nn.Module):
         tokens: bool = True,
         block_size: int = 4,
         diagonal_dense: bool = False,
-        init_std: float = 1.0,
+        init_std: float = 0.01,
         dropout_rate: float = 0.01,
         use_glu: bool = False,
     ):
