@@ -39,6 +39,8 @@ class SLiCE(nn.Module):
         block_size: int = 4,
         diagonal_dense: bool = False,
         init_std: float = 0.01,
+        scale: float = 1.0,
+        input_dependent_init: bool = False,
     ):
         super().__init__()
 
@@ -53,6 +55,8 @@ class SLiCE(nn.Module):
         self.bias = bias
         self.block_size = block_size
         self.init_std = init_std
+        self.scale = scale
+        self.input_dependent_init = input_dependent_init
 
         if diagonal_dense and self.block_size == self.hidden_dim:
             self.diagonal_dense = (
@@ -64,28 +68,33 @@ class SLiCE(nn.Module):
             self.diagonal_dense = diagonal_dense
 
         # Define learnt initial hidden state y_0
-        self.init = torch.nn.Parameter(torch.randn(self.hidden_dim) * self.init_std)
+        if self.input_dependent_init:
+            self.init = nn.Linear(self.input_dim, self.hidden_dim)
+            nn.init.normal_(self.init.weight, mean=0.0, std=self.init_std)
+            nn.init.normal_(self.init.weight, mean=0.0, std=self.init_std)
+        else:
+            self.init = torch.nn.Parameter(torch.randn(self.hidden_dim) * self.init_std)
 
         if self.diagonal_dense:
             # For diagonal + dense block structure, define separate parameters
             # for the diagonal and dense parts.
             self.vf_A_diag = nn.Linear(
-                self.input_dim + 2, self.hidden_dim - self.block_size, bias=False
+                self.input_dim + 1, self.hidden_dim - self.block_size, bias=False
             )
             self.vf_A_dense = nn.Linear(
-                self.input_dim + 2, self.block_size * self.block_size, bias=False
+                self.input_dim + 1, self.block_size * self.block_size, bias=False
             )
             nn.init.normal_(self.vf_A_diag.weight, mean=0.0, std=self.init_std)
-            nn.init.normal_(self.vf_A_dense.weight, mean=0.0, std=self.init_std)
+            nn.init.normal_(self.vf_A_dense.weight, mean=0.0, std=self.init_std / (self.block_size ** 0.5))
         else:
             # Define the vector field A as a linear layer
             self.vf_A = nn.Linear(
-                self.input_dim + 2, self.hidden_dim * self.block_size, bias=False
+                self.input_dim + 1, self.hidden_dim * self.block_size, bias=False
             )
-            nn.init.normal_(self.vf_A.weight, mean=0.0, std=self.init_std)
+            nn.init.normal_(self.vf_A.weight, mean=0.0, std=self.init_std / (self.block_size ** 0.5))
 
         if bias:
-            self.vf_B = nn.Linear(self.input_dim + 2, self.hidden_dim, bias=False)
+            self.vf_B = nn.Linear(self.input_dim + 1, self.hidden_dim, bias=False)
             nn.init.normal_(self.vf_B.weight, mean=0.0, std=self.init_std)
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
@@ -101,20 +110,22 @@ class SLiCE(nn.Module):
         """
         batch_size, seq_len, in_dim = X.shape
 
-        # Add the value and increments of a sample counting channel.
+        # Add the increments of a sample counting channel.
         inc_ts = torch.full(
             (batch_size, seq_len, 1), 1.0, device=X.device, dtype=X.dtype
         )
-        ts = torch.cumsum(inc_ts, dim=1)  # shape: (batch_size, seq_len, 1)
-        inp = torch.cat((inc_ts, ts, X), dim=-1)  # shape: (batch_size, seq_len, x_dim)
+        inp = torch.cat((inc_ts, X), dim=-1)  # shape: (batch_size, seq_len, x_dim)
 
-        # Scale inputs
-        inp = inp / seq_len
+        # Scale the input
+        inp = inp * self.scale
 
         # Initialise the hidden state
-        y = self.init.unsqueeze(0).expand(
-            batch_size, -1
-        )  # shape: (batch_size, hidden_dim)
+        if self.input_dependent_init:
+            y = self.init(X[:, 0, :])  # shape: (batch_size, hidden_dim)
+        else:
+            y = self.init.unsqueeze(0).expand(
+                batch_size, -1
+            )  # shape: (batch_size, hidden_dim)
 
         # Prepare a tensor to store all hidden states
         ys = torch.zeros(
@@ -200,6 +211,8 @@ class SLiCEBlock(nn.Module):
         block_size: int = 4,
         diagonal_dense: bool = False,
         init_std: float = 0.01,
+        scale: float = 1.0,
+        input_dependent_init: bool = False,
         dropout_rate: float = 0.01,
         use_glu: bool = False,
     ):
@@ -211,6 +224,8 @@ class SLiCEBlock(nn.Module):
             block_size=block_size,
             diagonal_dense=diagonal_dense,
             init_std=init_std,
+            scale=scale,
+            input_dependent_init=input_dependent_init,
         )
         self.norm = nn.LayerNorm(input_dim)
 
@@ -300,6 +315,8 @@ class StackedSLiCE(nn.Module):
         block_size: int = 4,
         diagonal_dense: bool = False,
         init_std: float = 0.01,
+        scale: float = 1.0,
+        input_dependent_init: bool = False,
         dropout_rate: float = 0.01,
         use_glu: bool = False,
     ):
@@ -319,6 +336,8 @@ class StackedSLiCE(nn.Module):
                     block_size=block_size,
                     diagonal_dense=diagonal_dense,
                     init_std=init_std,
+                    scale=scale,
+                    input_dependent_init=input_dependent_init,
                     dropout_rate=dropout_rate,
                     use_glu=use_glu,
                 )
@@ -355,3 +374,4 @@ class StackedSLiCE(nn.Module):
 
         # Step 3: Project to label_dim
         return self.linear(X)  # (batch_size, seq_len, label_dim)
+
