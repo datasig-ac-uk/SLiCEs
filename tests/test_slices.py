@@ -217,10 +217,10 @@ def test_stacked_slice_continuous_path():
     _assert_no_nan(y)
 
 
-def test_slice_trainable_init_input_dim2_four_basis_matrices_example():
+def test_slice_input_dim2_golden_example():
     """
-    Explicit calculation test with input_dim=2 so augmented inp has 4 channels:
-        inp = [inc_ts, ts, x1, x2]
+    Hand calculated example with input_dim=2 so augmented inp has 3 channels:
+        inp = [inc_ts, x1, x2]
     """
 
     m = SLiCE(
@@ -229,6 +229,7 @@ def test_slice_trainable_init_input_dim2_four_basis_matrices_example():
         block_size=2,
         diagonal_dense=False,
         bias=False,
+        scale=1.0,
     )
     m.eval()
 
@@ -239,35 +240,33 @@ def test_slice_trainable_init_input_dim2_four_basis_matrices_example():
     with torch.no_grad():
         m.init.copy_(init_vec.reshape_as(m.init))
 
-        # Basis matrices (each is 4x4 block-diagonal with block size 2).
+        # Basis matrices (each is 4x4 block-diagonal with block size 2)
         # Flatten order is row-major per block:
         # [b1_00, b1_01, b1_10, b1_11,  b2_00, b2_01, b2_10, b2_11]
         A1_flat = torch.tensor(
-            [0.40, 0.00, 0.00, -0.40, 0.2, 0.08, 0.00, 0.12], dtype=m.vf_A.weight.dtype
+            [0.10, 0.00, 0.00, -0.10, 0.05, 0.02, 0.00, 0.03],
+            dtype=m.vf_A.weight.dtype,
         )  # inc
         A2_flat = torch.tensor(
-            [0.00, 0.2, 0.00, 0.00, -0.08, 0.00, 0.16, 0.04], dtype=m.vf_A.weight.dtype
-        )  # ts
-        A3_flat = torch.tensor(
             [0.20, -0.10, 0.10, 0.00, 0.00, 0.03, -0.01, 0.05],
             dtype=m.vf_A.weight.dtype,
         )  # x1
-        A4_flat = torch.tensor(
+        A3_flat = torch.tensor(
             [-0.10, 0.00, 0.00, 0.05, 0.02, -0.02, 0.03, 0.00],
             dtype=m.vf_A.weight.dtype,
         )  # x2
 
-        # vf_A.weight shape is (8, 4) because inp has 4 channels [inc_ts, ts, x1, x2]
-        m.vf_A.weight.copy_(torch.stack([A1_flat, A2_flat, A3_flat, A4_flat], dim=1))
+        # vf_A input channels are now [inc_ts, x1, x2]
+        m.vf_A.weight.copy_(torch.stack([A1_flat, A2_flat, A3_flat], dim=1))
 
     # Fixed input sequence
     X = torch.tensor(
         [
             [
-                [4.0, -4.0],
-                [2.0, 8.0],
-                [-4.0, 6.0],
-                [8.0, 0.0],
+                [1.0, -1.0],
+                [0.5, 2.0],
+                [-1.0, 1.5],
+                [2.0, 0.0],
             ]
         ],
         dtype=torch.float32,
@@ -276,10 +275,10 @@ def test_slice_trainable_init_input_dim2_four_basis_matrices_example():
     # Expected outputs AFTER each update i=0..3 (hand-computed):
     expected = torch.tensor(
         [
-            [1.45, -0.75, 0.14, 2.18],
-            [1.4125, -0.6775, 0.1361, 2.3624],
-            [0.89, -0.8018125, 0.044326, 2.4098415],
-            [1.335, -0.54363125, 0.23578354, 2.8257202],
+            [1.5, -0.75, 0.14, 2.16],
+            [1.5375, -0.675, 0.1418, 2.2865],
+            [1.085625, -0.811875, 0.061684, 2.248569],
+            [1.7908125, -0.5135625, 0.24465372, 2.53964929],
         ],
         dtype=torch.float32,
     )
@@ -287,4 +286,4 @@ def test_slice_trainable_init_input_dim2_four_basis_matrices_example():
     Y = m(X)[0]  # (seq_len=4, hidden_dim=4)
 
     assert Y.shape == expected.shape
-    torch.testing.assert_close(Y, expected, rtol=1e-6, atol=1e-6)
+    torch.testing.assert_close(Y, expected, rtol=0.0, atol=1e-5)

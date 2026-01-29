@@ -10,15 +10,14 @@ $$
 y_i = y_{i-1} + A(X_i)y_{i-1} + B(X_i),
 $$
 
-where $A(\cdot): \mathbb{R}^D \rightarrow \mathbb{R}^{H \times H}$ and $B(\cdot): \mathbb{R}^D \rightarrow \mathbb{R}^H$ are *learned linear maps*, the initial state $y_0$ is learned, and the input is augmented with two extra channels:
+where $A(\cdot): \mathbb{R}^D \rightarrow \mathbb{R}^{H \times H}$ and $B(\cdot): \mathbb{R}^D \rightarrow \mathbb{R}^H$ are *learned linear maps*, the initial state $y_0$ is either a function of $X_0$ or a learnt vector, and the input is augmented with an extra channel:
 
-- `inc_ts` = a constant “increment” channel (all ones)
-- `ts` = a cumulative “sample time” channel (`cumsum(inc_ts)`)
+- `inc` = a constant “increment” channel (all ones)
 
 such that
 
 $$
-X_i = [\text{inc\_ts}_i,\; \text{ts}_i,\; X_i] \in \mathbb{R}^{D+2}.
+X_i = [inc_i, x_i] \in \mathbb{R}^{D+1}.
 $$
 
 ## What’s included
