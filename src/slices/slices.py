@@ -85,13 +85,19 @@ class SLiCE(nn.Module):
                 self.input_dim + 1, self.block_size * self.block_size, bias=False
             )
             nn.init.normal_(self.vf_A_diag.weight, mean=0.0, std=self.init_std)
-            nn.init.normal_(self.vf_A_dense.weight, mean=0.0, std=self.init_std / (self.block_size ** 0.5))
+            nn.init.normal_(
+                self.vf_A_dense.weight,
+                mean=0.0,
+                std=self.init_std / (self.block_size**0.5),
+            )
         else:
             # Define the vector field A as a linear layer
             self.vf_A = nn.Linear(
                 self.input_dim + 1, self.hidden_dim * self.block_size, bias=False
             )
-            nn.init.normal_(self.vf_A.weight, mean=0.0, std=self.init_std / (self.block_size ** 0.5))
+            nn.init.normal_(
+                self.vf_A.weight, mean=0.0, std=self.init_std / (self.block_size**0.5)
+            )
 
         if bias:
             self.vf_B = nn.Linear(self.input_dim + 1, self.hidden_dim, bias=False)
@@ -374,4 +380,3 @@ class StackedSLiCE(nn.Module):
 
         # Step 3: Project to label_dim
         return self.linear(X)  # (batch_size, seq_len, label_dim)
-
