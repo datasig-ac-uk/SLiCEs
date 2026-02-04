@@ -29,7 +29,7 @@ pip install slices
 Or install from source:
 
 ```bash
-pip install git+https://github.com/your-org/slices.git
+pip install git+https://github.com/datasig-ac-uk/slices.git
 ```
 
 ## What's included

@@ -9,7 +9,7 @@ SLiCEs/
 ├── pyproject.toml          # Dev workspace (uv-managed)
 ├── ruff.toml               # Linting configuration
 ├── README.md               # This file
-├── pyslice/                # Main deployable package
+├── slices/                # Main deployable package
 │   ├── pyproject.toml      # Package metadata (PyPI-ready)
 │   ├── README.md           # Package documentation
 │   ├── LICENSE             # MIT License
@@ -52,7 +52,7 @@ uv run pre-commit install
 ### Running Tests
 
 ```bash
-uv run pytest pyslice/tests -v
+uv run pytest slices/tests -v
 ```
 
 ### Linting and Formatting
@@ -77,23 +77,23 @@ uv run pre-commit run --all-files
 
 ## Package Development
 
-The main package code lives in `pyslice/`. This structure allows:
+The main package code lives in `slices/`. This structure allows:
 
 1. **Local development**: Install as editable via `uv sync`
-2. **Package publishing**: Publish `pyslice/` to PyPI independently
+2. **Package publishing**: Publish `slices/` to PyPI independently
 3. **Isolation**: Dev dependencies stay in the workspace, not in the published package
 
 ### Building the Package
 
 ```bash
-cd pyslice
+cd slices
 uv build
 ```
 
 ### Publishing to PyPI
 
 ```bash
-cd pyslice
+cd slices
 uv publish
 ```
 
@@ -105,18 +105,18 @@ $$
 y_i = y_{i-1} + A(X_i)y_{i-1} + B(X_i)
 $$
 
-See [pyslice/README.md](pyslice/README.md) for full documentation.
+See [slices/README.md](slices/README.md) for full documentation.
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/my-feature`
 3. Make your changes
-4. Run tests: `uv run pytest pyslice/tests -v`
+4. Run tests: `uv run pytest slices/tests -v`
 5. Run linting: `uv run ruff check . && uv run ruff format .`
 6. Commit: `git commit -m "Add my feature"`
 7. Push and create a Pull Request
 
 ## License
 
-MIT License. See [LICENSE](pyslice/LICENSE).
+MIT License. See [LICENSE](slices/LICENSE).

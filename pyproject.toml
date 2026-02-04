@@ -1,5 +1,5 @@
 [project]
-name = "slices-dev"
+name = "slices-mono-repo"
 version = "0.1.0"
 description = "Development workspace for SLiCEs - Structured Linear CDE layers"
 readme = "README.md"
@@ -10,7 +10,6 @@ authors = [
 
 dependencies = [
     "torch>=2.0.0",
-    "numpy>=1.24.0",
 ]
 
 [dependency-groups]
@@ -27,10 +26,10 @@ build-backend = "hatchling.build"
 [tool.uv]
 
 [tool.uv.sources]
-slices = { path = "pyslice", editable = true }
+slices = { path = "slices", editable = true }
 
 [tool.uv.workspace]
-members = ["pyslice"]
+members = ["slices"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["pyslice/src/slices"]
+packages = ["slices/src/slices"]

@@ -25,20 +25,19 @@ classifiers = [
 
 dependencies = [
     "torch>=2.0.0",
-    "numpy>=1.24.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/slices"
-Documentation = "https://github.com/your-org/slices#readme"
-Repository = "https://github.com/your-org/slices.git"
-Issues = "https://github.com/your-org/slices/issues"
+Homepage = "https://github.com/datasig-ac-uk/slices"
+Documentation = "https://github.com/datasig-ac-uk/slices#readme"
+Repository = "https://github.com/datasig-ac-uk/slices.git"
+Issues = "https://github.com/datasig-ac-uk/slices/issues"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
-    "ruff>=0.4.0",
-    "pre-commit>=3.5.0",
+    "pytest>=9.0.2",
+    "ruff>=0.14.13",
+    "pre-commit>=4.5.1",
 ]
 
 [build-system]
