@@ -10,6 +10,7 @@ authors = [
 
 dependencies = [
     "torch>=2.0.0",
+    "numpy>=2.4.1",
 ]
 
 [dependency-groups]
