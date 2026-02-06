@@ -1,35 +1,57 @@
 [project]
 name = "slices"
 version = "0.1.0"
-description = "Structured Linear CDE (SLiCE) layers for sequence modelling"
-authors = [
-    {name = "Benjamin Walker",email = "mail@benwalker.co.uk"}
-]
+description = "Structured Linear CDE (SLiCE) layers for sequence modelling in PyTorch"
 readme = "README.md"
-requires-python = ">=3.11,<3.15"
-packages = [{ include = "slices", from = "src" }]
-dependencies = [
-    "torch (>=2.9.1,<3.0.0)",
-    "numpy (>=2.4.1,<3.0.0)"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    {name = "Benjamin Walker", email = "mail@benwalker.co.uk"}
+]
+keywords = ["pytorch", "neural-cde", "sequence-modeling", "recurrent", "deep-learning"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
+dependencies = [
+    "torch>=2.0.0",
+    "numpy>=2.4.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/datasig-ac-uk/slices"
+Documentation = "https://github.com/datasig-ac-uk/slices#readme"
+Repository = "https://github.com/datasig-ac-uk/slices.git"
+Issues = "https://github.com/datasig-ac-uk/slices/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.14.13",
+    "pre-commit>=4.5.1",
+]
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.poetry.group.dev.dependencies]
-ruff = "^0.14.13"
-pre-commit = "^4.5.1"
-pytest = "^9.0.2"
+[tool.hatch.build.targets.wheel]
+packages = ["src/slices"]
 
-[tool.ruff]
-line-length = 88
-target-version = "py310"
-
-[tool.ruff.lint]
-select = ["E", "F", "I"]
-
-[tool.ruff.lint.per-file-ignores]
-"src/slices/__init__.py" = ["F401"]
-
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+]
