@@ -1,12 +1,28 @@
 [project]
-name = "slices-mono-repo"
+name = "slices"
 version = "0.1.0"
-description = "Development workspace for SLiCEs - Structured Linear CDE layers"
+description = "Structured Linear CDE (SLiCE) layers for sequence modelling in PyTorch"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
 authors = [
     {name = "Benjamin Walker", email = "mail@benwalker.co.uk"}
 ]
+keywords = ["pytorch", "neural-cde", "sequence-modeling", "recurrent", "deep-learning"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
 
 dependencies = [
     "torch>=2.0.0",
@@ -20,17 +36,23 @@ dev = [
     "pre-commit>=4.0.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/datasig-ac-uk/slices"
+Documentation = "https://github.com/datasig-ac-uk/slices#readme"
+Repository = "https://github.com/datasig-ac-uk/slices.git"
+Issues = "https://github.com/datasig-ac-uk/slices/issues"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv]
-
-[tool.uv.sources]
-slices = { path = "slices", editable = true }
-
-[tool.uv.workspace]
-members = ["slices"]
-
 [tool.hatch.build.targets.wheel]
-packages = ["slices/src/slices"]
+packages = ["src/slices"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+]

@@ -1,122 +1,168 @@
-# SLiCEs Development Workspace
+# SLiCEs
 
-This is the **development mono-repo** for the `slices` PyTorch package — providing **Structured Linear CDE (SLiCE)** layers for sequence modeling.
+`slices` is a small PyTorch package providing **Structured Linear CDE (SLiCE)** layers.
 
-## Repository Structure
+## Mathematical form
 
+Given an input sequence $x_i \in \mathbb{R}^D$ for $i=1,\dots,T$, a SLiCE computes hidden states $y_i \in \mathbb{R}^H$ via
+
+$$
+y_i = y_{i-1} + A(X_i)y_{i-1} + B(X_i),
+$$
+
+where $A(\cdot): \mathbb{R}^D \rightarrow \mathbb{R}^{H \times H}$ and $B(\cdot): \mathbb{R}^D \rightarrow \mathbb{R}^H$ are *learned linear maps*, the initial state $y_0$ is either a function of $X_0$ or a learnt vector, and the input is augmented with an extra channel:
+
+- `inc` = a constant “increment” channel (all ones)
+
+such that
+
+$$
+X_i = [inc_i, x_i] \in \mathbb{R}^{D+1}.
+$$
+
+## Installation
+
+```bash
+pip install slices
 ```
-SLiCEs/
-├── pyproject.toml          # Dev workspace (uv-managed)
-├── ruff.toml               # Linting configuration
-├── README.md               # This file
-├── slices/                # Main deployable package
-│   ├── pyproject.toml      # Package metadata (PyPI-ready)
-│   ├── README.md           # Package documentation
-│   ├── LICENSE             # MIT License
-│   ├── src/
-│   │   └── slices/         # Python package
-│   │       ├── __init__.py
-│   │       └── slices.py
-│   └── tests/
-│       └── test_slices.py
-└── .github/
-    └── workflows/
-        └── ci.yml          # GitHub Actions CI
+
+Or install from source:
+
+```bash
+pip install git+https://github.com/datasig-ac-uk/slices.git
 ```
 
-## Quick Start (Development)
+## What's included
 
-### Prerequisites
+- **`SLiCE`**: the core structured linear recurrence layer
+- **`SLiCEBlock`**: a residual block wrapping `SLiCE` with a post-activation stage (`GLU` or `tanh`)
+- **`StackedSLiCE`**: stacks multiple `SLiCEBlock`s with an embedding + output projection (supports tokens or continuous inputs)
+
+## Structured transition matrices
+
+SLiCE supports different $A(X_i)$ structures:
+
+### 1) Diagonal (elementwise update)
+Set:
+- `diagonal_dense=False`
+- `block_size=1`
+
+Then $A(X_i)$ is diagonal, which aligns with the approach used by Mamba (see [here](https://arxiv.org/abs/2505.17761) for more details).
+
+### 2) Block-diagonal
+Set:
+- `diagonal_dense=False`
+- `block_size > 1`
+
+Then $A(X_i)$ is block-diagonal with blocks of shape `(block_size × block_size)`.
+
+### 3) Diagonal + dense tail block
+Set:
+- `diagonal_dense=True`
+- `block_size > 1`
+
+Then the first `(hidden_dim - block_size)` dimensions are diagonal, and the final `block_size` dimensions are updated via a dense `(block_size × block_size)` matrix.
+
+## Quickstart
+
+### Use `SLiCE` directly
+
+```python
+import torch
+from slices import SLiCE
+
+x = torch.randn(8, 128, 32)  # (batch, seq, input_dim)
+
+layer = SLiCE(
+    input_dim=32,
+    hidden_dim=64,
+    block_size=4,
+    diagonal_dense=False,
+    bias=True,
+)
+
+y = layer(x)  # (8, 128, 64)
+print(y.shape)
+```
+
+### Use `SLiCEBlock` as a residual sequence block
+
+```python
+import torch
+from slices import SLiCEBlock
+
+x = torch.randn(4, 256, 64)
+
+block = SLiCEBlock(
+    input_dim=64,
+    block_size=4,
+    diagonal_dense=True,
+    dropout_rate=0.01,
+    use_glu=True,
+)
+
+y = block(x)  # (4, 256, 64)
+```
+
+### Stack blocks for a full model
+
+#### Token sequence mode (`tokens=True`)
+
+Uses an `nn.Embedding(data_dim, hidden_dim)` front-end.
+
+```python
+import torch
+from slices import StackedSLiCE
+
+batch, seq_len = 2, 128
+vocab_size = 5000
+
+x = torch.randint(0, vocab_size, (batch, seq_len))
+
+model = StackedSLiCE(
+    num_blocks=4,
+    data_dim=vocab_size,
+    hidden_dim=256,
+    label_dim=vocab_size,
+    tokens=True,
+    block_size=4,
+    diagonal_dense=False,
+    use_glu=True,
+)
+
+logits = model(x)  # (batch, seq_len, vocab_size)
+```
+
+#### Continuous time-series mode (`tokens=False`)
+
+Uses an `nn.Linear(data_dim, hidden_dim)` front-end.
+
+```python
+import torch
+from slices import StackedSLiCE
+
+x = torch.randn(16, 100, 12)  # (batch, seq, data_dim)
+
+model = StackedSLiCE(
+    num_blocks=3,
+    data_dim=12,
+    hidden_dim=64,
+    label_dim=10,
+    tokens=False,
+    block_size=4,
+    diagonal_dense=True,
+)
+
+y = model(x)  # (16, 100, 10)
+```
+
+## Requirements
 
 - Python ≥ 3.11
-- [uv](https://github.com/astral-sh/uv) package manager
-
-### Setup
-
-Clone and install in development mode:
-
-```bash
-git clone <repo-url>
-cd SLiCEs
-
-# Install uv if not already installed
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Create virtual environment and install dependencies
-uv sync --dev
-
-# Install pre-commit hooks
-uv run pre-commit install
-```
-
-### Running Tests
-
-```bash
-uv run pytest slices/tests -v
-```
-
-### Linting and Formatting
-
-```bash
-# Check linting
-uv run ruff check .
-
-# Auto-fix linting issues
-uv run ruff check . --fix
-
-# Format code
-uv run ruff format .
-```
-
-### Pre-commit Hooks
-
-```bash
-# Run all hooks on all files
-uv run pre-commit run --all-files
-```
-
-## Package Development
-
-The main package code lives in `slices/`. This structure allows:
-
-1. **Local development**: Install as editable via `uv sync`
-2. **Package publishing**: Publish `slices/` to PyPI independently
-3. **Isolation**: Dev dependencies stay in the workspace, not in the published package
-
-### Building the Package
-
-```bash
-cd slices
-uv build
-```
-
-### Publishing to PyPI
-
-```bash
-cd slices
-uv publish
-```
-
-## Mathematical Background
-
-Given an input sequence $x_i \in \mathbb{R}^D$ for $i=1,\dots,T$, a SLiCE computes hidden states $y_i \in \mathbb{R}^H$ via:
-
-$$
-y_i = y_{i-1} + A(X_i)y_{i-1} + B(X_i)
-$$
-
-See [slices/README.md](slices/README.md) for full documentation.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Make your changes
-4. Run tests: `uv run pytest slices/tests -v`
-5. Run linting: `uv run ruff check . && uv run ruff format .`
-6. Commit: `git commit -m "Add my feature"`
-7. Push and create a Pull Request
+- PyTorch ≥ 2.0.0
+- NumPy ≥ 1.24.0
 
 ## License
 
-MIT License. See [LICENSE](slices/LICENSE).
+MIT License. See [LICENSE](LICENSE).
+
