@@ -23,9 +23,17 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
+
 dependencies = [
     "torch>=2.0.0",
     "numpy>=2.4.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.14.0",
+    "pre-commit>=4.0.0",
 ]
 
 [project.urls]
@@ -33,13 +41,6 @@ Homepage = "https://github.com/datasig-ac-uk/slices"
 Documentation = "https://github.com/datasig-ac-uk/slices#readme"
 Repository = "https://github.com/datasig-ac-uk/slices.git"
 Issues = "https://github.com/datasig-ac-uk/slices/issues"
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=9.0.2",
-    "ruff>=0.14.13",
-    "pre-commit>=4.5.1",
-]
 
 [build-system]
 requires = ["hatchling"]
