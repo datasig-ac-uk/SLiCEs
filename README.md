@@ -20,7 +20,19 @@ $$
 X_i = [inc_i, x_i] \in \mathbb{R}^{D+1}.
 $$
 
-## What’s included
+## Installation
+
+```bash
+pip install slices
+```
+
+Or install from source:
+
+```bash
+pip install git+https://github.com/datasig-ac-uk/slices.git
+```
+
+## What's included
 
 - **`SLiCE`**: the core structured linear recurrence layer
 - **`SLiCEBlock`**: a residual block wrapping `SLiCE` with a post-activation stage (`GLU` or `tanh`)
@@ -57,7 +69,7 @@ Then the first `(hidden_dim - block_size)` dimensions are diagonal, and the fina
 
 ```python
 import torch
-from slices.slices import SLiCE
+from slices import SLiCE
 
 x = torch.randn(8, 128, 32)  # (batch, seq, input_dim)
 
@@ -71,13 +83,13 @@ layer = SLiCE(
 
 y = layer(x)  # (8, 128, 64)
 print(y.shape)
-````
+```
 
 ### Use `SLiCEBlock` as a residual sequence block
 
 ```python
 import torch
-from slices.slices import SLiCEBlock
+from slices import SLiCEBlock
 
 x = torch.randn(4, 256, 64)
 
@@ -100,7 +112,7 @@ Uses an `nn.Embedding(data_dim, hidden_dim)` front-end.
 
 ```python
 import torch
-from slices.slices import StackedSLiCE
+from slices import StackedSLiCE
 
 batch, seq_len = 2, 128
 vocab_size = 5000
@@ -127,7 +139,7 @@ Uses an `nn.Linear(data_dim, hidden_dim)` front-end.
 
 ```python
 import torch
-from slices.slices import StackedSLiCE
+from slices import StackedSLiCE
 
 x = torch.randn(16, 100, 12)  # (batch, seq, data_dim)
 
@@ -144,52 +156,13 @@ model = StackedSLiCE(
 y = model(x)  # (16, 100, 10)
 ```
 
-## Installation (development)
+## Requirements
 
-Clone the repo and install dependencies with Poetry:
-
-```bash
-poetry install
-```
-
-Run the test suite:
-
-```bash
-poetry run pytest -q
-```
-
-## Linting and formatting
-
-This repo uses **Ruff** for linting + formatting.
-
-```bash
-poetry run ruff check .
-poetry run ruff format .
-```
-
-## Pre-commit hooks
-
-Install git hooks:
-
-```bash
-poetry run pre-commit install
-```
-
-Run all hooks:
-
-```bash
-poetry run pre-commit run --all-files
-```
-
-## Package layout
-
-```text
-src/slices/        # Python package
-tests/             # pytest tests
-.github/workflows/ # CI configuration
-```
+- Python ≥ 3.11
+- PyTorch ≥ 2.0.0
+- NumPy ≥ 1.24.0
 
 ## License
 
-MIT License. See `LICENSE`.
+MIT License. See [LICENSE](LICENSE).
 

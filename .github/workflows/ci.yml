@@ -1,6 +1,8 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
 
 jobs:
@@ -9,22 +11,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.12"
+          version: "latest"
 
-      - name: Install Poetry
-        run: pipx install poetry
+      - name: Set up Python
+        run: uv python install 3.12
 
-      - name: Install dev dependencies
-        run: poetry install --only dev
+      - name: Install dependencies
+        run: uv sync --dev
 
       - name: Ruff lint
-        run: poetry run ruff check .
+        run: uv run ruff check .
 
       - name: Ruff format check
-        run: poetry run ruff format . --check
+        run: uv run ruff format . --check
 
   test:
     runs-on: self-hosted
@@ -35,16 +37,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
         with:
-          python-version: ${{ matrix.python-version }}
+          version: "latest"
 
-      - name: Install Poetry
-        run: pipx install poetry
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: poetry install
+        run: uv sync --dev
 
       - name: Run tests
-        run: poetry run pytest -q
+        run: uv run pytest tests -v
+
