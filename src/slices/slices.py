@@ -71,7 +71,8 @@ class SLiCE(nn.Module):
         if self.input_dependent_init:
             self.init = nn.Linear(self.input_dim, self.hidden_dim)
             nn.init.normal_(self.init.weight, mean=0.0, std=self.init_std)
-            nn.init.normal_(self.init.weight, mean=0.0, std=self.init_std)
+            if self.init.bias is not None:
+                nn.init.zeros_(self.init.bias)
         else:
             self.init = torch.nn.Parameter(torch.randn(self.hidden_dim) * self.init_std)
 
