@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from slices.slices import SLiCE, SLiCEBlock, StackedSLiCE
+from slices import SLiCE, SLiCEBlock, StackedSLiCE
 
 
 def _rand_x(batch: int, seq: int, dim: int, *, seed: int = 0, dtype=torch.float32):
