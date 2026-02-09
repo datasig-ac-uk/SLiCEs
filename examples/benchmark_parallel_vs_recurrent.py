@@ -70,7 +70,7 @@ def _parse_args() -> argparse.Namespace:
             "--output-dir",
             dict(
                 type=Path,
-                default=Path("slices/examples/images"),
+                default=Path("examples/images"),
                 help="Directory where the combined 3D speedup plot is saved.",
             ),
         ),
