@@ -52,7 +52,7 @@ def test_slice_forward_block_diagonal_block_size_gt1_bias_true_with_grads():
         bias=True,
     )
 
-    y = m(x)
+    y = m(x, parallel=False)
     assert y.shape == (3, 5, 4)
     _assert_no_nan(y)
 
@@ -74,7 +74,7 @@ def test_slice_forward_block_size_one_bias_false():
         diagonal_dense=False,
         bias=False,  # covers bias-off path
     )
-    y = m(x)
+    y = m(x, parallel=False)
     assert y.shape == (2, 4, 3)
     _assert_no_nan(y)
 
@@ -91,7 +91,7 @@ def test_slice_forward_diagonal_dense_bias_true_with_grads():
         bias=True,
     )
 
-    y = m(x)
+    y = m(x, parallel=False)
     assert y.shape == (2, 6, 8)
     _assert_no_nan(y)
 
@@ -115,7 +115,7 @@ def test_slice_diagonal_dense_edge_case_hidden_dim_equals_block_size():
         bias=False,
     )
 
-    y = m(x)
+    y = m(x, parallel=False)
     assert y.shape == (2, 3, 2)
     _assert_no_nan(y)
 
@@ -130,7 +130,7 @@ def test_slice_diagonal_dense_block_size_one_runs():
         diagonal_dense=True,
         bias=True,
     )
-    y = m(x)
+    y = m(x, parallel=False)
     assert y.shape == (2, 4, 3)
     _assert_no_nan(y)
 
@@ -152,6 +152,7 @@ def test_slice_block_forward_covers_glu_and_tanh(use_glu: bool, diagonal_dense: 
         dropout_rate=0.05,
         use_glu=use_glu,
     )
+    block.slice.use_parallel = False
 
     y = block(x)
     assert y.shape == x.shape
@@ -183,6 +184,8 @@ def test_stacked_slice_tokens_path():
         dropout_rate=0.0,
         use_glu=True,
     )
+    for block in m.blocks:
+        block.slice.use_parallel = False
     m.eval()
 
     y = m(x)
@@ -210,6 +213,8 @@ def test_stacked_slice_continuous_path():
         dropout_rate=0.0,
         use_glu=False,
     )
+    for block in m.blocks:
+        block.slice.use_parallel = False
     m.eval()
 
     y = m(x)
@@ -283,7 +288,142 @@ def test_slice_input_dim2_golden_example():
         dtype=torch.float32,
     )
 
-    Y = m(X)[0]  # (seq_len=4, hidden_dim=4)
+    Y = m(X, parallel=False)[0]  # (seq_len=4, hidden_dim=4)
 
     assert Y.shape == expected.shape
     torch.testing.assert_close(Y, expected, rtol=0.0, atol=1e-5)
+
+
+# -----------------------
+# SLiCE: parallel paths
+# -----------------------
+
+
+def test_slice_input_dim2_golden_example_parallel():
+    """
+    Same hand-calculated setup as test_slice_input_dim2_golden_example,
+    but evaluated through the parallel/chunked path.
+    """
+
+    m = SLiCE(
+        input_dim=2,
+        hidden_dim=4,
+        block_size=2,
+        diagonal_dense=False,
+        bias=False,
+        scale=1.0,
+    )
+    m.eval()
+
+    init_vec = torch.tensor([1.0, -1.0, 0.0, 2.0], dtype=torch.float32)
+
+    with torch.no_grad():
+        m.init.copy_(init_vec.reshape_as(m.init))
+
+        A1_flat = torch.tensor(
+            [0.10, 0.00, 0.00, -0.10, 0.05, 0.02, 0.00, 0.03],
+            dtype=m.vf_A.weight.dtype,
+        )  # inc
+        A2_flat = torch.tensor(
+            [0.20, -0.10, 0.10, 0.00, 0.00, 0.03, -0.01, 0.05],
+            dtype=m.vf_A.weight.dtype,
+        )  # x1
+        A3_flat = torch.tensor(
+            [-0.10, 0.00, 0.00, 0.05, 0.02, -0.02, 0.03, 0.00],
+            dtype=m.vf_A.weight.dtype,
+        )  # x2
+
+        m.vf_A.weight.copy_(torch.stack([A1_flat, A2_flat, A3_flat], dim=1))
+
+    X = torch.tensor(
+        [
+            [
+                [1.0, -1.0],
+                [0.5, 2.0],
+                [-1.0, 1.5],
+                [2.0, 0.0],
+            ]
+        ],
+        dtype=torch.float32,
+    )
+
+    expected = torch.tensor(
+        [
+            [1.5, -0.75, 0.14, 2.16],
+            [1.5375, -0.675, 0.1418, 2.2865],
+            [1.085625, -0.811875, 0.061684, 2.248569],
+            [1.7908125, -0.5135625, 0.24465372, 2.53964929],
+        ],
+        dtype=torch.float32,
+    )
+
+    Y = m(X, parallel=True, chunk_size=4)[0]
+
+    assert Y.shape == expected.shape
+    torch.testing.assert_close(Y, expected, rtol=0.0, atol=1e-5)
+
+
+@pytest.mark.parametrize("bias", [False, True])
+@pytest.mark.parametrize(
+    "cfg",
+    [
+        # diagonal / elementwise
+        dict(input_dim=3, hidden_dim=3, block_size=1, diagonal_dense=False),
+        # block-diagonal
+        dict(input_dim=4, hidden_dim=4, block_size=2, diagonal_dense=False),
+        # diagonal + one dense block
+        dict(input_dim=5, hidden_dim=8, block_size=4, diagonal_dense=True),
+        # dense (single full block)
+        dict(input_dim=6, hidden_dim=6, block_size=6, diagonal_dense=False),
+    ],
+)
+@pytest.mark.parametrize("chunk_size", [1, 2, 8])
+def test_slice_parallel_matches_recurrent(cfg, bias: bool, chunk_size: int):
+    x = _rand_x(batch=2, seq=7, dim=cfg["input_dim"], seed=11)
+    m = SLiCE(**cfg, bias=bias, use_parallel=False)
+
+    y_recurrent = m(x, parallel=False)
+    y_parallel = m(x, parallel=True, chunk_size=chunk_size)
+
+    assert y_parallel.shape == y_recurrent.shape
+    _assert_no_nan(y_parallel)
+    torch.testing.assert_close(y_parallel, y_recurrent, rtol=1e-5, atol=1e-6)
+
+
+def test_slice_parallel_with_input_dependent_init_matches_recurrent():
+    x = _rand_x(batch=3, seq=6, dim=4, seed=12)
+    m = SLiCE(
+        input_dim=4,
+        hidden_dim=4,
+        block_size=2,
+        diagonal_dense=False,
+        bias=True,
+        input_dependent_init=True,
+    )
+
+    y_recurrent = m(x, parallel=False)
+    y_parallel = m(x, parallel=True, chunk_size=3)
+
+    assert y_parallel.shape == y_recurrent.shape
+    _assert_no_nan(y_parallel)
+    torch.testing.assert_close(y_parallel, y_recurrent, rtol=1e-5, atol=1e-6)
+
+
+def test_slice_parallel_forward_with_grads():
+    x = _rand_x(batch=2, seq=5, dim=4, seed=13).requires_grad_(True)
+    m = SLiCE(
+        input_dim=4,
+        hidden_dim=4,
+        block_size=2,
+        diagonal_dense=False,
+        bias=True,
+        use_parallel=True,
+    )
+
+    y = m(x)
+    assert y.shape == (2, 5, 4)
+    _assert_no_nan(y)
+
+    y.sum().backward()
+    assert x.grad is not None
+    _assert_grads_exist(m)
