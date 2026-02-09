@@ -1,3 +1,5 @@
+import warnings
+from collections.abc import Callable
 from typing import Optional
 
 import torch
@@ -41,6 +43,8 @@ class SLiCE(nn.Module):
         init_std: float = 0.01,
         scale: float = 1.0,
         input_dependent_init: bool = False,
+        use_parallel: bool = True,
+        chunk_size: int = 256,
     ):
         super().__init__()
 
@@ -50,6 +54,7 @@ class SLiCE(nn.Module):
             raise ValueError("block_size must be at least 1.")
         if not diagonal_dense and hidden_dim % block_size != 0:
             raise ValueError("hidden_dim must be divisible by block_size.")
+
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.bias = bias
@@ -57,6 +62,12 @@ class SLiCE(nn.Module):
         self.init_std = init_std
         self.scale = scale
         self.input_dependent_init = input_dependent_init
+
+        self.use_parallel = use_parallel
+        if chunk_size < 1:
+            raise ValueError("chunk_size must be at least 1.")
+        self.chunk_size = int(chunk_size)
+        self._warned_parallel_may_be_slower = False
 
         if diagonal_dense and self.block_size == self.hidden_dim:
             self.diagonal_dense = (
@@ -97,24 +108,196 @@ class SLiCE(nn.Module):
                 self.input_dim + 1, self.hidden_dim * self.block_size, bias=False
             )
             nn.init.normal_(
-                self.vf_A.weight, mean=0.0, std=self.init_std / (self.block_size**0.5)
+                self.vf_A.weight,
+                mean=0.0,
+                std=self.init_std / (self.block_size**0.5),
             )
 
         if bias:
             self.vf_B = nn.Linear(self.input_dim + 1, self.hidden_dim, bias=False)
             nn.init.normal_(self.vf_B.weight, mean=0.0, std=self.init_std)
 
-    def forward(self, X: torch.Tensor) -> torch.Tensor:
+    # ---- scan kernels: block_size == 1 (elementwise) ----
+
+    def _scan_kernels_elementwise(self) -> tuple[Callable, Callable, Callable]:
+        def build(inp_chunk: torch.Tensor):
+            A = self.vf_A(inp_chunk)  # (B, C, H)
+            M = 1.0 + A
+            if self.bias:
+                b = self.vf_B(inp_chunk)
+            else:
+                b = torch.zeros_like(M)
+            return (M, b)
+
+        def combine(lhs, rhs):
+            # Composition: rhs ∘ lhs
+            M_l, b_l = lhs
+            M_r, b_r = rhs
+            M = M_r * M_l
+            b = M_r * b_l + b_r
+            return (M, b)
+
+        def apply(prefix, y0: torch.Tensor):
+            M, b = prefix  # (B, C, H)
+            return M * y0.unsqueeze(1) + b
+
+        return combine, build, apply
+
+    # ---- scan kernels: block diagonal (block_size > 1, not diagonal_dense) ----
+
+    def _scan_kernels_blockdiag(self) -> tuple[Callable, Callable, Callable]:
+        bsz = self.block_size
+        nblocks = self.hidden_dim // bsz
+
+        def build(inp_chunk: torch.Tensor):
+            # A: (B, C, nblocks, b, b)
+            A = self.vf_A(inp_chunk).view(
+                inp_chunk.shape[0], inp_chunk.shape[1], nblocks, bsz, bsz
+            )
+            eye = torch.eye(bsz, device=inp_chunk.device, dtype=inp_chunk.dtype).view(
+                1, 1, 1, bsz, bsz
+            )
+            M = eye + A
+            if self.bias:
+                b = self.vf_B(inp_chunk).view(
+                    inp_chunk.shape[0], inp_chunk.shape[1], nblocks, bsz
+                )
+            else:
+                b = torch.zeros(
+                    inp_chunk.shape[0],
+                    inp_chunk.shape[1],
+                    nblocks,
+                    bsz,
+                    device=inp_chunk.device,
+                    dtype=inp_chunk.dtype,
+                )
+            return (M, b)
+
+        def combine(lhs, rhs):
+            M_l, b_l = lhs
+            M_r, b_r = rhs
+            M = torch.matmul(M_r, M_l)
+            b = torch.matmul(M_r, b_l.unsqueeze(-1)).squeeze(-1) + b_r
+            return (M, b)
+
+        def apply(prefix, y0: torch.Tensor):
+            M, b = prefix  # M: (B,C,nblocks,b,b), b: (B,C,nblocks,b)
+            y0b = (
+                y0.view(y0.shape[0], nblocks, bsz).unsqueeze(1).unsqueeze(-1)
+            )  # (B,1,nblocks,b,1)
+            y = torch.matmul(M, y0b).squeeze(-1) + b  # (B,C,nblocks,b)
+            return y.reshape(y.shape[0], y.shape[1], self.hidden_dim)
+
+        return combine, build, apply
+
+    # ---- scan kernels: diagonal + one dense block ----
+
+    def _scan_kernels_diagonal_dense(self) -> tuple[Callable, Callable, Callable]:
+        bsz = self.block_size
+        h = self.hidden_dim
+        hdiag = h - bsz
+
+        def build(inp_chunk: torch.Tensor):
+            A_diag = self.vf_A_diag(inp_chunk)  # (B,C,hdiag)
+            M_diag = 1.0 + A_diag
+
+            A_dense = self.vf_A_dense(inp_chunk).view(
+                inp_chunk.shape[0], inp_chunk.shape[1], bsz, bsz
+            )
+            eye = torch.eye(bsz, device=inp_chunk.device, dtype=inp_chunk.dtype).view(
+                1, 1, bsz, bsz
+            )
+            M_dense = eye + A_dense
+
+            if self.bias:
+                B = self.vf_B(inp_chunk)  # (B,C,h)
+                b_diag = B[..., :hdiag]
+                b_dense = B[..., hdiag:]
+            else:
+                b_diag = torch.zeros_like(M_diag)
+                b_dense = torch.zeros(
+                    inp_chunk.shape[0],
+                    inp_chunk.shape[1],
+                    bsz,
+                    device=inp_chunk.device,
+                    dtype=inp_chunk.dtype,
+                )
+
+            return (M_diag, M_dense, b_diag, b_dense)
+
+        def combine(lhs, rhs):
+            Md_l, Mdense_l, bd_l, bdense_l = lhs
+            Md_r, Mdense_r, bd_r, bdense_r = rhs
+
+            Md = Md_r * Md_l
+            bd = Md_r * bd_l + bd_r
+
+            Mdense = torch.matmul(Mdense_r, Mdense_l)
+            bdense = (
+                torch.matmul(Mdense_r, bdense_l.unsqueeze(-1)).squeeze(-1) + bdense_r
+            )
+
+            return (Md, Mdense, bd, bdense)
+
+        def apply(prefix, y0: torch.Tensor):
+            Md, Mdense, bd, bdense = prefix
+
+            y_diag0 = y0[:, :hdiag]
+            y_dense0 = y0[:, hdiag:]
+
+            y_diag = Md * y_diag0.unsqueeze(1) + bd
+
+            y0d = y_dense0.unsqueeze(1).unsqueeze(-1)  # (B,1,b,1)
+            y_dense = torch.matmul(Mdense, y0d).squeeze(-1) + bdense  # (B,C,b)
+
+            return torch.cat([y_diag, y_dense], dim=-1)
+
+        return combine, build, apply
+
+    def forward(
+        self,
+        X: torch.Tensor,
+        parallel: Optional[bool] = None,
+        chunk_size: Optional[int] = None,
+    ) -> torch.Tensor:
         """
-        Forward pass:
-            Recurrently computes the hidden states y_i given inputs X_i.
+        Toggle between recurrent and parallel chunked scan.
 
         Args:
-            X (torch.Tensor): shape (batch_size, seq_len, input_dim)
-
-        Returns:
-            torch.Tensor: shape (batch_size, seq_len, hidden_dim)
+            X: (batch, seq, input_dim)
+            parallel: if None, uses self.use_parallel
+            chunk_size: if None, uses self.chunk_size
         """
+        if parallel is None:
+            parallel = self.use_parallel
+        if not parallel:
+            return self._forward_recurrent(X)
+
+        if (
+            self.block_size >= 64
+            and self.hidden_dim >= 128
+            and not self._warned_parallel_may_be_slower
+        ):
+            warnings.warn(
+                "Parallel mode may be slower than recurrent mode for large "
+                f"block_size ({self.block_size}) and hidden_dim ({self.hidden_dim}). "
+                "Consider calling forward(..., parallel=False) "
+                "if throughput regresses.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            self._warned_parallel_may_be_slower = True
+
+        cs = self.chunk_size if chunk_size is None else int(chunk_size)
+        if cs < 1:
+            raise ValueError("chunk_size must be at least 1.")
+        return self._forward_parallel(X, chunk_size=cs)
+
+    # -------------------------
+    # Recurrent implementation
+    # -------------------------
+
+    def _forward_recurrent(self, X: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, in_dim = X.shape
 
         # Add the increments of a sample counting channel.
@@ -122,7 +305,6 @@ class SLiCE(nn.Module):
             (batch_size, seq_len, 1), 1.0, device=X.device, dtype=X.dtype
         )
         inp = torch.cat((inc_ts, X), dim=-1)  # shape: (batch_size, seq_len, x_dim)
-
         # Scale the input
         inp = inp * self.scale
 
@@ -179,6 +361,65 @@ class SLiCE(nn.Module):
 
             y = y + state_transition
             ys[:, i] = y
+
+        return ys
+
+    # -------------------------
+    # Parallel chunked scan
+    # -------------------------
+
+    def _forward_parallel(self, X: torch.Tensor, chunk_size: int) -> torch.Tensor:
+        """
+        Chunked parallel forward using torch.associative_scan (generic).
+
+        Each step defines an affine transform:
+            y_i = M_i y_{i-1} + b_i,  where M_i = I + A_i,  b_i = B_i
+        We scan-combine transforms within each chunk, then apply prefixes
+        to chunk-start state.
+        """
+        assoc_scan = torch._higher_order_ops.associative_scan
+
+        batch_size, seq_len, _ = X.shape
+
+        inc_ts = torch.full(
+            (batch_size, seq_len, 1), 1.0, device=X.device, dtype=X.dtype
+        )
+        inp = torch.cat((inc_ts, X), dim=-1) * self.scale  # (B, T, D+1)
+
+        if self.input_dependent_init:
+            y_start = self.init(X[:, 0, :])
+        else:
+            y_start = self.init.unsqueeze(0).expand(batch_size, -1)
+
+        ys = torch.empty(
+            batch_size, seq_len, self.hidden_dim, device=X.device, dtype=X.dtype
+        )
+
+        if self.diagonal_dense:
+            combine_fn, build_fn, apply_fn = self._scan_kernels_diagonal_dense()
+        elif self.block_size > 1:
+            combine_fn, build_fn, apply_fn = self._scan_kernels_blockdiag()
+        else:
+            combine_fn, build_fn, apply_fn = self._scan_kernels_elementwise()
+
+        for start in range(0, seq_len, chunk_size):
+            end = min(seq_len, start + chunk_size)
+            inp_chunk = inp[:, start:end, :]  # (B, C, D+1)
+
+            transforms = build_fn(
+                inp_chunk
+            )  # pytree of tensors with leading (B, C, ...)
+            prefix_transforms = assoc_scan(
+                combine_fn,
+                transforms,
+                dim=1,
+                reverse=False,
+                combine_mode="generic",
+            )
+
+            y_chunk = apply_fn(prefix_transforms, y_start)  # (B, C, H)
+            ys[:, start:end, :] = y_chunk
+            y_start = y_chunk[:, -1, :]
 
         return ys
 

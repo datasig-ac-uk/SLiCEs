@@ -38,6 +38,10 @@ pip install git+https://github.com/datasig-ac-uk/slices.git
 - **`SLiCEBlock`**: a residual block wrapping `SLiCE` with a post-activation stage (`GLU` or `tanh`)
 - **`StackedSLiCE`**: stacks multiple `SLiCEBlock`s with an embedding + output projection (supports tokens or continuous inputs)
 
+`SLiCE` supports both:
+- **Recurrent execution** (step-by-step update)
+- **Parallel chunked scan execution** using `torch.associative_scan`
+
 ## Structured transition matrices
 
 SLiCE supports different $A(X_i)$ structures:
@@ -84,6 +88,15 @@ layer = SLiCE(
 y = layer(x)  # (8, 128, 64)
 print(y.shape)
 ```
+
+You can control execution mode per-call:
+
+```python
+y_recurrent = layer(x, parallel=False)
+y_parallel = layer(x, parallel=True, chunk_size=256)
+```
+
+`parallel` and `chunk_size` can also be configured as module defaults via the constructor (`use_parallel`, `chunk_size`).
 
 ### Use `SLiCEBlock` as a residual sequence block
 
@@ -156,6 +169,25 @@ model = StackedSLiCE(
 y = model(x)  # (16, 100, 10)
 ```
 
+## Benchmarking
+
+To compare recurrent vs parallel throughput across sequence lengths and hidden dimensions:
+
+```bash
+python examples/benchmark_parallel_vs_recurrent.py
+```
+
+This script:
+- benchmarks all four SLiCE matrix modes (`diagonal`, `block_diagonal`, `diagonal_dense`, `dense`)
+- prints timing/speedup tables
+- saves a combined 3D plot to `examples/images/parallel_vs_recurrent_speedup_3d_all_modes.png`
+
+For plotting in development, install development dependencies (includes `matplotlib`):
+
+```bash
+uv sync --dev
+```
+
 ## Requirements
 
 - Python ≥ 3.11
@@ -165,4 +197,3 @@ y = model(x)  # (16, 100, 10)
 ## License
 
 MIT License. See [LICENSE](LICENSE).
-
