@@ -23,7 +23,7 @@ $$
 ## Installation
 
 ```bash
-pip install slices
+pip install torch-slices
 ```
 
 Or install from source:
