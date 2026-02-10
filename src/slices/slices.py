@@ -67,7 +67,25 @@ class SLiCE(nn.Module):
         if chunk_size < 1:
             raise ValueError("chunk_size must be at least 1.")
         self.chunk_size = int(chunk_size)
-        self._warned_parallel_may_be_slower = False
+        if self.use_parallel:
+            assoc_ops = getattr(torch, "_higher_order_ops", None)
+            if assoc_ops is None or not hasattr(assoc_ops, "associative_scan"):
+                warnings.warn(
+                    "use_parallel=True requested, but torch.associative_scan is unavailable. "
+                    "Falling back to recurrent mode.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                self.use_parallel = False
+            elif self.block_size >= 64 and hidden_dim >= 128:
+                warnings.warn(
+                    "Parallel mode may be slower than recurrent mode for large "
+                    f"block_size ({self.block_size}) and hidden_dim ({hidden_dim}). "
+                    "Consider setting use_parallel=False "
+                    "if throughput regresses.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
         if diagonal_dense and self.block_size == self.hidden_dim:
             self.diagonal_dense = (
@@ -254,44 +272,17 @@ class SLiCE(nn.Module):
 
         return combine, build, apply
 
-    def forward(
-        self,
-        X: torch.Tensor,
-        parallel: Optional[bool] = None,
-        chunk_size: Optional[int] = None,
-    ) -> torch.Tensor:
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
         """
-        Toggle between recurrent and parallel chunked scan.
+        Run either recurrent or parallel chunked scan based on constructor settings.
 
         Args:
             X: (batch, seq, input_dim)
-            parallel: if None, uses self.use_parallel
-            chunk_size: if None, uses self.chunk_size
         """
-        if parallel is None:
-            parallel = self.use_parallel
-        if not parallel:
+        if not self.use_parallel:
             return self._forward_recurrent(X)
 
-        if (
-            self.block_size >= 64
-            and self.hidden_dim >= 128
-            and not self._warned_parallel_may_be_slower
-        ):
-            warnings.warn(
-                "Parallel mode may be slower than recurrent mode for large "
-                f"block_size ({self.block_size}) and hidden_dim ({self.hidden_dim}). "
-                "Consider calling forward(..., parallel=False) "
-                "if throughput regresses.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            self._warned_parallel_may_be_slower = True
-
-        cs = self.chunk_size if chunk_size is None else int(chunk_size)
-        if cs < 1:
-            raise ValueError("chunk_size must be at least 1.")
-        return self._forward_parallel(X, chunk_size=cs)
+        return self._forward_parallel(X, chunk_size=self.chunk_size)
 
     # -------------------------
     # Recurrent implementation
@@ -443,6 +434,8 @@ class SLiCEBlock(nn.Module):
         diagonal_dense (bool): If True, A is composed of a diagonal matrix and a dense
                                block.
         init_std (float): Standard deviation for weight initialisation in the SLiCE.
+        use_parallel (bool): Whether the inner SLiCE uses parallel scan execution.
+        chunk_size (int): Chunk size used by the inner SLiCE when in parallel mode.
         dropout_rate (float): Dropout probability applied after the residual addition.
         use_glu (bool): Whether to apply a Linear -> GLU stage after the residual or
                             a Linear -> tanh stage.
@@ -461,6 +454,8 @@ class SLiCEBlock(nn.Module):
         init_std: float = 0.01,
         scale: float = 1.0,
         input_dependent_init: bool = False,
+        use_parallel: bool = True,
+        chunk_size: int = 256,
         dropout_rate: float = 0.01,
         use_glu: bool = False,
     ):
@@ -474,6 +469,8 @@ class SLiCEBlock(nn.Module):
             init_std=init_std,
             scale=scale,
             input_dependent_init=input_dependent_init,
+            use_parallel=use_parallel,
+            chunk_size=chunk_size,
         )
         self.norm = nn.LayerNorm(input_dim)
 
@@ -541,6 +538,8 @@ class StackedSLiCE(nn.Module):
         diagonal_dense (bool): If True, A is composed of a diagonal matrix and a dense
                                block in each block.
         init_std (float): Standard deviation for the initialisation in each block.
+        use_parallel (bool): Whether each block's inner SLiCE uses parallel scan execution.
+        chunk_size (int): Chunk size used by each block's inner SLiCE in parallel mode.
         dropout_rate (float): Dropout probability applied in each block after the
                               residual.
         use_glu (bool): Whether to apply a Linear -> GLU or Linear -> tanh stage after
@@ -565,6 +564,8 @@ class StackedSLiCE(nn.Module):
         init_std: float = 0.01,
         scale: float = 1.0,
         input_dependent_init: bool = False,
+        use_parallel: bool = True,
+        chunk_size: int = 256,
         dropout_rate: float = 0.01,
         use_glu: bool = False,
     ):
@@ -586,6 +587,8 @@ class StackedSLiCE(nn.Module):
                     init_std=init_std,
                     scale=scale,
                     input_dependent_init=input_dependent_init,
+                    use_parallel=use_parallel,
+                    chunk_size=chunk_size,
                     dropout_rate=dropout_rate,
                     use_glu=use_glu,
                 )

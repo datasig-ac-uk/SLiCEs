@@ -83,20 +83,15 @@ layer = SLiCE(
     block_size=4,
     diagonal_dense=False,
     bias=True,
+    use_parallel=True,
+    chunk_size=256,
 )
 
 y = layer(x)  # (8, 128, 64)
 print(y.shape)
 ```
 
-You can control execution mode per-call:
-
-```python
-y_recurrent = layer(x, parallel=False)
-y_parallel = layer(x, parallel=True, chunk_size=256)
-```
-
-`parallel` and `chunk_size` can also be configured as module defaults via the constructor (`use_parallel`, `chunk_size`).
+Execution mode is configured via constructor arguments (`use_parallel`, `chunk_size`).
 
 ### Use `SLiCEBlock` as a residual sequence block
 
@@ -191,8 +186,8 @@ uv sync --dev
 ## Requirements
 
 - Python ≥ 3.11
-- PyTorch ≥ 2.0.0
-- NumPy ≥ 1.24.0
+- PyTorch ≥ 2.8.0
+- NumPy ≥ 2.4.1
 
 ## License
 
