@@ -71,7 +71,8 @@ class SLiCE(nn.Module):
             assoc_ops = getattr(torch, "_higher_order_ops", None)
             if assoc_ops is None or not hasattr(assoc_ops, "associative_scan"):
                 warnings.warn(
-                    "use_parallel=True requested, but torch.associative_scan is unavailable. "
+                    "use_parallel=True requested, "
+                    "but torch.associative_scan is unavailable. "
                     "Falling back to recurrent mode.",
                     RuntimeWarning,
                     stacklevel=2,
@@ -538,7 +539,8 @@ class StackedSLiCE(nn.Module):
         diagonal_dense (bool): If True, A is composed of a diagonal matrix and a dense
                                block in each block.
         init_std (float): Standard deviation for the initialisation in each block.
-        use_parallel (bool): Whether each block's inner SLiCE uses parallel scan execution.
+        use_parallel (bool): Whether each block's inner SLiCE uses
+                             parallel scan execution.
         chunk_size (int): Chunk size used by each block's inner SLiCE in parallel mode.
         dropout_rate (float): Dropout probability applied in each block after the
                               residual.
