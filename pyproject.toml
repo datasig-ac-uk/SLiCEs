@@ -1,5 +1,5 @@
 [project]
-name = "slices"
+name = "torch-slices"
 version = "0.1.0"
 description = "Structured Linear CDE (SLiCE) layers for sequence modelling in PyTorch"
 readme = "README.md"
