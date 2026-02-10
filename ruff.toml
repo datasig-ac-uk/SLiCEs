@@ -1,0 +1,19 @@
+# Ruff configuration for SLiCEs development
+# https://docs.astral.sh/ruff/
+
+line-length = 88
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E731", "UP045", "SIM108"]
+
+[lint.per-file-ignores]
+"src/slices/__init__.py" = ["F401"]
+
+[lint.isort]
+known-first-party = ["slices"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
