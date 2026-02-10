@@ -2,6 +2,7 @@ import pytest
 import torch
 
 from slices import SLiCE, SLiCEBlock, StackedSLiCE
+import slices.slices as slices_module
 
 
 def _rand_x(batch: int, seq: int, dim: int, *, seed: int = 0, dtype=torch.float32):
@@ -50,9 +51,10 @@ def test_slice_forward_block_diagonal_block_size_gt1_bias_true_with_grads():
         block_size=2,
         diagonal_dense=False,
         bias=True,
+        use_parallel=False,
     )
 
-    y = m(x, parallel=False)
+    y = m(x)
     assert y.shape == (3, 5, 4)
     _assert_no_nan(y)
 
@@ -73,8 +75,9 @@ def test_slice_forward_block_size_one_bias_false():
         block_size=1,
         diagonal_dense=False,
         bias=False,  # covers bias-off path
+        use_parallel=False,
     )
-    y = m(x, parallel=False)
+    y = m(x)
     assert y.shape == (2, 4, 3)
     _assert_no_nan(y)
 
@@ -89,9 +92,10 @@ def test_slice_forward_diagonal_dense_bias_true_with_grads():
         block_size=4,
         diagonal_dense=True,
         bias=True,
+        use_parallel=False,
     )
 
-    y = m(x, parallel=False)
+    y = m(x)
     assert y.shape == (2, 6, 8)
     _assert_no_nan(y)
 
@@ -101,6 +105,28 @@ def test_slice_forward_diagonal_dense_bias_true_with_grads():
     assert m.vf_A_diag.weight.grad is not None
     assert m.vf_A_dense.weight.grad is not None
     _assert_grads_exist(m)
+
+
+def test_slice_parallel_falls_back_when_associative_scan_is_unavailable(monkeypatch):
+    x = _rand_x(batch=2, seq=4, dim=3, seed=10)
+    monkeypatch.setattr(
+        slices_module.torch, "_higher_order_ops", object(), raising=False
+    )
+
+    m = SLiCE(
+        input_dim=3,
+        hidden_dim=3,
+        block_size=1,
+        diagonal_dense=False,
+        bias=True,
+        use_parallel=True,
+    )
+
+    assert not m.use_parallel
+    expected = m._forward_recurrent(x)
+    y = m(x)
+    assert y.shape == expected.shape
+    assert torch.allclose(y, expected)
 
 
 def test_slice_diagonal_dense_edge_case_hidden_dim_equals_block_size():
@@ -113,9 +139,10 @@ def test_slice_diagonal_dense_edge_case_hidden_dim_equals_block_size():
         block_size=2,
         diagonal_dense=True,
         bias=False,
+        use_parallel=False,
     )
 
-    y = m(x, parallel=False)
+    y = m(x)
     assert y.shape == (2, 3, 2)
     _assert_no_nan(y)
 
@@ -129,8 +156,9 @@ def test_slice_diagonal_dense_block_size_one_runs():
         block_size=1,
         diagonal_dense=True,
         bias=True,
+        use_parallel=False,
     )
-    y = m(x, parallel=False)
+    y = m(x)
     assert y.shape == (2, 4, 3)
     _assert_no_nan(y)
 
@@ -149,10 +177,10 @@ def test_slice_block_forward_covers_glu_and_tanh(use_glu: bool, diagonal_dense: 
         input_dim=6,
         block_size=2 if not diagonal_dense else 4,
         diagonal_dense=diagonal_dense,
+        use_parallel=False,
         dropout_rate=0.05,
         use_glu=use_glu,
     )
-    block.slice.use_parallel = False
 
     y = block(x)
     assert y.shape == x.shape
@@ -181,11 +209,10 @@ def test_stacked_slice_tokens_path():
         tokens=True,
         block_size=4,
         diagonal_dense=False,
+        use_parallel=False,
         dropout_rate=0.0,
         use_glu=True,
     )
-    for block in m.blocks:
-        block.slice.use_parallel = False
     m.eval()
 
     y = m(x)
@@ -210,11 +237,10 @@ def test_stacked_slice_continuous_path():
         tokens=False,
         block_size=4,
         diagonal_dense=True,
+        use_parallel=False,
         dropout_rate=0.0,
         use_glu=False,
     )
-    for block in m.blocks:
-        block.slice.use_parallel = False
     m.eval()
 
     y = m(x)
@@ -235,6 +261,7 @@ def test_slice_input_dim2_golden_example():
         diagonal_dense=False,
         bias=False,
         scale=1.0,
+        use_parallel=False,
     )
     m.eval()
 
@@ -288,7 +315,7 @@ def test_slice_input_dim2_golden_example():
         dtype=torch.float32,
     )
 
-    Y = m(X, parallel=False)[0]  # (seq_len=4, hidden_dim=4)
+    Y = m(X)[0]  # (seq_len=4, hidden_dim=4)
 
     assert Y.shape == expected.shape
     torch.testing.assert_close(Y, expected, rtol=0.0, atol=1e-5)
@@ -312,6 +339,8 @@ def test_slice_input_dim2_golden_example_parallel():
         diagonal_dense=False,
         bias=False,
         scale=1.0,
+        use_parallel=True,
+        chunk_size=4,
     )
     m.eval()
 
@@ -357,7 +386,7 @@ def test_slice_input_dim2_golden_example_parallel():
         dtype=torch.float32,
     )
 
-    Y = m(X, parallel=True, chunk_size=4)[0]
+    Y = m(X)[0]
 
     assert Y.shape == expected.shape
     torch.testing.assert_close(Y, expected, rtol=0.0, atol=1e-5)
@@ -380,10 +409,12 @@ def test_slice_input_dim2_golden_example_parallel():
 @pytest.mark.parametrize("chunk_size", [1, 2, 8])
 def test_slice_parallel_matches_recurrent(cfg, bias: bool, chunk_size: int):
     x = _rand_x(batch=2, seq=7, dim=cfg["input_dim"], seed=11)
-    m = SLiCE(**cfg, bias=bias, use_parallel=False)
+    m_recurrent = SLiCE(**cfg, bias=bias, use_parallel=False)
+    m_parallel = SLiCE(**cfg, bias=bias, use_parallel=True, chunk_size=chunk_size)
+    m_parallel.load_state_dict(m_recurrent.state_dict())
 
-    y_recurrent = m(x, parallel=False)
-    y_parallel = m(x, parallel=True, chunk_size=chunk_size)
+    y_recurrent = m_recurrent(x)
+    y_parallel = m_parallel(x)
 
     assert y_parallel.shape == y_recurrent.shape
     _assert_no_nan(y_parallel)
@@ -392,17 +423,29 @@ def test_slice_parallel_matches_recurrent(cfg, bias: bool, chunk_size: int):
 
 def test_slice_parallel_with_input_dependent_init_matches_recurrent():
     x = _rand_x(batch=3, seq=6, dim=4, seed=12)
-    m = SLiCE(
+    m_recurrent = SLiCE(
         input_dim=4,
         hidden_dim=4,
         block_size=2,
         diagonal_dense=False,
         bias=True,
         input_dependent_init=True,
+        use_parallel=False,
     )
+    m_parallel = SLiCE(
+        input_dim=4,
+        hidden_dim=4,
+        block_size=2,
+        diagonal_dense=False,
+        bias=True,
+        input_dependent_init=True,
+        use_parallel=True,
+        chunk_size=3,
+    )
+    m_parallel.load_state_dict(m_recurrent.state_dict())
 
-    y_recurrent = m(x, parallel=False)
-    y_parallel = m(x, parallel=True, chunk_size=3)
+    y_recurrent = m_recurrent(x)
+    y_parallel = m_parallel(x)
 
     assert y_parallel.shape == y_recurrent.shape
     _assert_no_nan(y_parallel)
