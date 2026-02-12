@@ -36,6 +36,10 @@ dev = [
     "pre-commit>=4.0.0",
     "matplotlib>=3.8.0",
 ]
+examples = [
+    "datasets>=2.20.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/datasig-ac-uk/slices"
 Documentation = "https://github.com/datasig-ac-uk/slices#readme"
