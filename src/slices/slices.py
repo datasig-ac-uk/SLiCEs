@@ -8,10 +8,10 @@ import torch.nn as nn
 
 class SLiCE(nn.Module):
     """
-    A structured linear controlled differential equation (SLiCE) layer.
+    A structured linear controlled differential equation (SLiCE) recurrence.
 
     Given a sequence of values (or increments) X_i in R^D for i=1,...,T, a SLiCE
-    layer computes a sequence of hidden states y_i in R^H for i=1,...,T via the
+    recurrence computes a sequence of hidden states y_i in R^H for i=1,...,T via the
     recurrence:
         y_i = y_{i-1} + A(X_i) y_{i-1} + B(X_i)   for i=1,...,T,
     where A: R^D -> R^{H x H} and B: R^D -> R^H are learnt linear functions and y_{0}
@@ -416,7 +416,7 @@ class SLiCE(nn.Module):
         return ys
 
 
-class SLiCEBlock(nn.Module):
+class SLiCELayer(nn.Module):
     """
     A residual block wrapping a SLiCE. Includes:
       1. SLiCE forward pass
@@ -527,13 +527,13 @@ class SLiCEBlock(nn.Module):
 
 class StackedSLiCE(nn.Module):
     """
-    Stacks multiple SLiCEBlocks, preceded by an embedding layer and followed by a
+    Stacks multiple SLiCELayers, preceded by an embedding layer and followed by a
     final linear layer.
 
     Args:
-        num_blocks (int): Number of SLiCEBlocks to stack.
+        num_layers (int): Number of SLiCELayers to stack.
         data_dim (int): Dimension of the input.
-        hidden_dim (int): Hidden dimension used in each SLiCEBlock.
+        hidden_dim (int): Hidden dimension used in each SLiCELayer.
         label_dim (int): Size of the output dimension.
         block_size (int): The size of the blocks along the diagonal of A in each block.
         diagonal_dense (bool): If True, A is composed of a diagonal matrix and a dense
@@ -555,7 +555,7 @@ class StackedSLiCE(nn.Module):
 
     def __init__(
         self,
-        num_blocks: int,
+        num_layers: int,
         data_dim: int,
         hidden_dim: int,
         label_dim: int,
@@ -578,10 +578,10 @@ class StackedSLiCE(nn.Module):
         else:
             self.embedding = nn.Linear(data_dim, hidden_dim)
 
-        # Build the stack of SLiCE blocks
-        self.blocks = nn.ModuleList(
+        # Build stacked SLiCE layers.
+        self.layers = nn.ModuleList(
             [
-                SLiCEBlock(
+                SLiCELayer(
                     input_dim=hidden_dim,
                     bias=bias,
                     block_size=block_size,
@@ -594,7 +594,7 @@ class StackedSLiCE(nn.Module):
                     dropout_rate=dropout_rate,
                     use_glu=use_glu,
                 )
-                for _ in range(num_blocks)
+                for _ in range(num_layers)
             ]
         )
 
@@ -605,7 +605,7 @@ class StackedSLiCE(nn.Module):
         """
         Forward pass of the stacked model:
             1. Embed input X
-            2. Pass through each SLiCE block
+            2. Pass through each SLiCE layer
             3. Apply final linear projection
 
         Args:
@@ -621,9 +621,9 @@ class StackedSLiCE(nn.Module):
         else:
             X = self.embedding(X.float())
 
-        # Step 2: Pass through each SLiCE block
-        for block in self.blocks:
-            X = block(X)  # (batch_size, seq_len, hidden_dim)
+        # Step 2: Pass through each stacked layer.
+        for layer in self.layers:
+            X = layer(X)  # (batch_size, seq_len, hidden_dim)
 
         # Step 3: Project to label_dim
         return self.linear(X)  # (batch_size, seq_len, label_dim)

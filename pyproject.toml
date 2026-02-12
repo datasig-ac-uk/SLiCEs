@@ -1,6 +1,6 @@
 [project]
 name = "torch-slices"
-version = "0.1.0"
+version = "0.2.0"
 description = "Structured Linear CDE (SLiCE) layers for sequence modelling in PyTorch"
 readme = "README.md"
 license = "MIT"
@@ -36,7 +36,6 @@ dev = [
     "pre-commit>=4.0.0",
     "matplotlib>=3.8.0",
 ]
-
 [project.urls]
 Homepage = "https://github.com/datasig-ac-uk/slices"
 Documentation = "https://github.com/datasig-ac-uk/slices#readme"
