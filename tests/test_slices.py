@@ -2,7 +2,7 @@ import pytest
 import torch
 
 import slices.slices as slices_module
-from slices import SLiCE, SLiCEBlock, StackedSLiCE
+from slices import SLiCE, SLiCELayer, StackedSLiCE
 
 
 def _rand_x(batch: int, seq: int, dim: int, *, seed: int = 0, dtype=torch.float32):
@@ -164,7 +164,7 @@ def test_slice_diagonal_dense_block_size_one_runs():
 
 
 # -----------------------
-# SLiCEBlock: both GLU and tanh paths
+# SLiCELayer: both GLU and tanh paths
 # -----------------------
 
 
@@ -173,7 +173,7 @@ def test_slice_diagonal_dense_block_size_one_runs():
 def test_slice_block_forward_covers_glu_and_tanh(use_glu: bool, diagonal_dense: bool):
     x = _rand_x(batch=2, seq=4, dim=6, seed=7)
 
-    block = SLiCEBlock(
+    block = SLiCELayer(
         input_dim=6,
         block_size=2 if not diagonal_dense else 4,
         diagonal_dense=diagonal_dense,
@@ -202,7 +202,7 @@ def test_stacked_slice_tokens_path():
     x = torch.randint(low=0, high=vocab, size=(batch, seq))
 
     m = StackedSLiCE(
-        num_blocks=2,
+        num_layers=2,
         data_dim=vocab,
         hidden_dim=hidden,
         label_dim=label,
@@ -230,7 +230,7 @@ def test_stacked_slice_continuous_path():
     x = _rand_x(batch=batch, seq=seq, dim=data_dim, seed=8)
 
     m = StackedSLiCE(
-        num_blocks=3,
+        num_layers=3,
         data_dim=data_dim,
         hidden_dim=hidden,
         label_dim=label,

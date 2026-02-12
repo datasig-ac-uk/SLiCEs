@@ -1,6 +1,6 @@
 # SLiCEs
 
-`slices` is a small PyTorch package providing **Structured Linear CDE (SLiCE)** layers.
+`slices` is a small PyTorch package providing **Structured Linear CDE (SLiCE)** recurrences.
 
 ## Mathematical form
 
@@ -34,9 +34,9 @@ pip install git+https://github.com/datasig-ac-uk/slices.git
 
 ## What's included
 
-- **`SLiCE`**: the core structured linear recurrence layer
-- **`SLiCEBlock`**: a residual block wrapping `SLiCE` with a post-activation stage (`GLU` or `tanh`)
-- **`StackedSLiCE`**: stacks multiple `SLiCEBlock`s with an embedding + output projection (supports tokens or continuous inputs)
+- **`SLiCE`**: the core structured recurrence
+- **`SLiCELayer`**: a residual layer wrapping `SLiCE` with a post-activation stage (`GLU` or `tanh`)
+- **`StackedSLiCE`**: stacks multiple `SLiCELayer`s with an embedding + output projection (supports tokens or continuous inputs)
 
 `SLiCE` supports both:
 - **Recurrent execution** (step-by-step update)
@@ -93,15 +93,15 @@ print(y.shape)
 
 Execution mode is configured via constructor arguments (`use_parallel`, `chunk_size`).
 
-### Use `SLiCEBlock` as a residual sequence block
+### Use `SLiCELayer` as a residual sequence layer
 
 ```python
 import torch
-from slices import SLiCEBlock
+from slices import SLiCELayer
 
 x = torch.randn(4, 256, 64)
 
-block = SLiCEBlock(
+layer = SLiCELayer(
     input_dim=64,
     block_size=4,
     diagonal_dense=True,
@@ -109,10 +109,10 @@ block = SLiCEBlock(
     use_glu=True,
 )
 
-y = block(x)  # (4, 256, 64)
+y = layer(x)  # (4, 256, 64)
 ```
 
-### Stack blocks for a full model
+### Stack layers for a full model
 
 #### Token sequence mode (`tokens=True`)
 
@@ -128,7 +128,7 @@ vocab_size = 5000
 x = torch.randint(0, vocab_size, (batch, seq_len))
 
 model = StackedSLiCE(
-    num_blocks=4,
+    num_layers=4,
     data_dim=vocab_size,
     hidden_dim=256,
     label_dim=vocab_size,
@@ -152,7 +152,7 @@ from slices import StackedSLiCE
 x = torch.randn(16, 100, 12)  # (batch, seq, data_dim)
 
 model = StackedSLiCE(
-    num_blocks=3,
+    num_layers=3,
     data_dim=12,
     hidden_dim=64,
     label_dim=10,
