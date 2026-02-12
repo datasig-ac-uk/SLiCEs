@@ -164,12 +164,43 @@ model = StackedSLiCE(
 y = model(x)  # (16, 100, 10)
 ```
 
+## Training Example
+
+`examples/language_disambiguation.py` is a simple example of training a
+`StackedSLiCE` model end-to-end on a real dataset.
+
+This example:
+- uses a real dataset (**wikimedia/wikipedia**, English/French subset) for
+  **character-level language disambiguation**
+- trains a compact token-mode `StackedSLiCE` end-to-end
+- evaluates validation accuracy every `--eval-every` training steps
+- prints sample predictions so you can inspect model behavior quickly
+
+To run it, first install the example dependencies:
+
+```bash
+uv sync --group examples
+```
+
+and then execute the script:
+
+```bash
+uv run python examples/language_disambiguation.py
+```
+
+Useful flags:
+- `--device cpu|cuda`
+- `--train-steps 3000`
+- `--eval-every 300`
+- `--train-size 12000 --val-size 3000`
+- `--max-seq-len 192`
+
 ## Benchmarking
 
 To compare recurrent vs parallel throughput across sequence lengths and hidden dimensions:
 
 ```bash
-python examples/benchmark_parallel_vs_recurrent.py
+uv run python examples/benchmark_parallel_vs_recurrent.py
 ```
 
 This script:
