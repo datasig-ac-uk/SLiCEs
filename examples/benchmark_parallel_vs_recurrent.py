@@ -96,24 +96,34 @@ def _benchmark_forward(
     model: SLiCE,
     x: torch.Tensor,
     *,
-    parallel: bool,
+    use_parallel: bool,
     chunk_size: int,
     warmup: int,
     iters: int,
     device: torch.device,
 ) -> float:
+    assoc_ops = getattr(torch, "_higher_order_ops", None)
+    has_assoc_scan = assoc_ops is not None and hasattr(assoc_ops, "associative_scan")
+    if use_parallel and not has_assoc_scan:
+        raise RuntimeError(
+            "Parallel benchmark requested, but torch.associative_scan is unavailable."
+        )
+
+    model.use_parallel = use_parallel
+    model.chunk_size = int(chunk_size)
+
     sync = (
         (lambda: torch.cuda.synchronize(device))
         if device.type == "cuda"
         else (lambda: None)
     )
     for _ in range(warmup):
-        model(x, parallel=parallel, chunk_size=chunk_size)
+        model(x)
     sync()
 
     t0 = time.perf_counter()
     for _ in range(iters):
-        model(x, parallel=parallel, chunk_size=chunk_size)
+        model(x)
     sync()
     t1 = time.perf_counter()
 
@@ -483,7 +493,7 @@ def _benchmark_mode_grid(
             recurrent_t = _benchmark_forward(
                 model,
                 x,
-                parallel=False,
+                use_parallel=False,
                 chunk_size=seq_len,
                 warmup=args.warmup,
                 iters=args.iters,
@@ -492,7 +502,7 @@ def _benchmark_mode_grid(
             parallel_t = _benchmark_forward(
                 model,
                 x,
-                parallel=True,
+                use_parallel=True,
                 chunk_size=seq_len,
                 warmup=args.warmup,
                 iters=args.iters,
