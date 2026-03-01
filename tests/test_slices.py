@@ -36,9 +36,38 @@ def test_slice_raises_if_block_size_less_than_one():
         SLiCE(input_dim=3, hidden_dim=3, block_size=0)
 
 
+def test_slice_raises_if_path_mode_is_invalid():
+    with pytest.raises(ValueError, match="path_mode must be one of"):
+        SLiCE(input_dim=3, hidden_dim=3, path_mode="not-a-mode")
+
+
 # -----------------------
 # SLiCE: forward paths
 # -----------------------
+
+
+@pytest.mark.parametrize("use_parallel", [False, True])
+def test_slice_values_mode_matches_manual_external_differencing(use_parallel: bool):
+    x = _rand_x(batch=2, seq=6, dim=4, seed=1)
+    dx = torch.diff(x, dim=1, prepend=torch.zeros_like(x[:, :1, :]))
+
+    kwargs = dict(
+        input_dim=4,
+        hidden_dim=4,
+        block_size=2,
+        diagonal_dense=False,
+        bias=True,
+        use_parallel=use_parallel,
+        chunk_size=2,
+    )
+    m_values = SLiCE(**kwargs, path_mode="values")
+    m_increments = SLiCE(**kwargs, path_mode="increments")
+    m_increments.load_state_dict(m_values.state_dict())
+
+    y_values = m_values(x)
+    y_increments = m_increments(dx)
+
+    torch.testing.assert_close(y_values, y_increments, rtol=1e-5, atol=1e-6)
 
 
 def test_slice_forward_block_diagonal_block_size_gt1_bias_true_with_grads():
@@ -164,13 +193,54 @@ def test_slice_diagonal_dense_block_size_one_runs():
 
 
 # -----------------------
-# SLiCELayer: both GLU and tanh paths
+# SLiCELayer
 # -----------------------
 
 
-@pytest.mark.parametrize("use_glu", [False, True])
+def test_slice_layer_default_forward_shape():
+    x = _rand_x(batch=2, seq=4, dim=6, seed=7)
+
+    block = SLiCELayer(
+        input_dim=6,
+        block_size=2,
+        diagonal_dense=False,
+        use_parallel=False,
+        dropout_rate=0.05,
+    )
+
+    y = block(x)
+    assert block.norm_type == "rmsnorm"
+    assert block.prenorm
+    assert block.ff_style == "mlp"
+    assert block.ff_activation == "gelu"
+    assert block.dropout_position == "residual"
+    assert y.shape == x.shape
+    _assert_no_nan(y)
+
+
+def test_slice_layer_default_backward():
+    x = _rand_x(batch=2, seq=4, dim=6, seed=14).requires_grad_(True)
+
+    block = SLiCELayer(
+        input_dim=6,
+        block_size=2,
+        diagonal_dense=False,
+        use_parallel=False,
+        dropout_rate=0.0,
+    )
+
+    y = block(x)
+    y.sum().backward()
+
+    assert x.grad is not None
+    _assert_grads_exist(block)
+
+
+@pytest.mark.parametrize("ff_activation", ["tanh", "glu"])
 @pytest.mark.parametrize("diagonal_dense", [False, True])
-def test_slice_block_forward_covers_glu_and_tanh(use_glu: bool, diagonal_dense: bool):
+def test_slice_layer_single_stage_toggles_cover_glu_and_tanh(
+    ff_activation: str, diagonal_dense: bool
+):
     x = _rand_x(batch=2, seq=4, dim=6, seed=7)
 
     block = SLiCELayer(
@@ -179,10 +249,21 @@ def test_slice_block_forward_covers_glu_and_tanh(use_glu: bool, diagonal_dense: 
         diagonal_dense=diagonal_dense,
         use_parallel=False,
         dropout_rate=0.05,
-        use_glu=use_glu,
+        norm_type="layernorm",
+        prenorm=False,
+        ff_style="single",
+        ff_activation=ff_activation,
+        ff_mult=1,
+        dropout_position="output",
     )
 
     y = block(x)
+    assert block.norm_type == "layernorm"
+    assert not block.prenorm
+    assert block.ff_style == "single"
+    assert block.ff_mult == 1
+    assert block.ff_activation == ff_activation
+    assert block.dropout_position == "output"
     assert y.shape == x.shape
     _assert_no_nan(y)
 
@@ -193,7 +274,7 @@ def test_slice_block_forward_covers_glu_and_tanh(use_glu: bool, diagonal_dense: 
 
 
 def test_stacked_slice_tokens_path():
-    # tokens=True uses nn.Embedding
+    # tokens=True uses nn.Embedding and the default layer structure.
     batch, seq = 2, 5
     vocab = 11
     hidden = 8
@@ -211,7 +292,6 @@ def test_stacked_slice_tokens_path():
         diagonal_dense=False,
         use_parallel=False,
         dropout_rate=0.0,
-        use_glu=True,
     )
     m.eval()
 
@@ -221,7 +301,7 @@ def test_stacked_slice_tokens_path():
 
 
 def test_stacked_slice_continuous_path():
-    # tokens=False uses nn.Linear embedding
+    # tokens=False uses nn.Linear embedding.
     batch, seq = 2, 4
     data_dim = 6
     hidden = 8
@@ -239,7 +319,12 @@ def test_stacked_slice_continuous_path():
         diagonal_dense=True,
         use_parallel=False,
         dropout_rate=0.0,
-        use_glu=False,
+        norm_type="layernorm",
+        prenorm=False,
+        ff_style="single",
+        ff_activation="tanh",
+        ff_mult=1,
+        dropout_position="output",
     )
     m.eval()
 
@@ -248,7 +333,7 @@ def test_stacked_slice_continuous_path():
     _assert_no_nan(y)
 
 
-def test_slice_input_dim2_golden_example():
+def test_slice_increments_mode_preserves_direct_input_behaviour():
     """
     Hand calculated example with input_dim=2 so augmented inp has 3 channels:
         inp = [inc_ts, x1, x2]
@@ -262,6 +347,7 @@ def test_slice_input_dim2_golden_example():
         bias=False,
         scale=1.0,
         use_parallel=False,
+        path_mode="increments",
     )
     m.eval()
 
@@ -326,10 +412,11 @@ def test_slice_input_dim2_golden_example():
 # -----------------------
 
 
-def test_slice_input_dim2_golden_example_parallel():
+def test_slice_increments_mode_preserves_direct_input_behaviour_parallel():
     """
-    Same hand-calculated setup as test_slice_input_dim2_golden_example,
-    but evaluated through the parallel/chunked path.
+    Same hand-calculated setup as
+    test_slice_increments_mode_preserves_direct_input_behaviour, but evaluated
+    through the parallel/chunked path.
     """
 
     m = SLiCE(
@@ -341,6 +428,7 @@ def test_slice_input_dim2_golden_example_parallel():
         scale=1.0,
         use_parallel=True,
         chunk_size=4,
+        path_mode="increments",
     )
     m.eval()
 

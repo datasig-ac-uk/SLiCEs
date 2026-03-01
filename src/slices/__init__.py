@@ -6,7 +6,7 @@ This package provides efficient structured linear controlled differential equati
 
 Main components:
     - SLiCE: Core structured recurrence
-    - SLiCELayer: Residual layer wrapping SLiCE with post-activation
+    - SLiCELayer: Default residual SLiCE layer
     - StackedSLiCE: Stacked model with embedding and output projection
 """
 
