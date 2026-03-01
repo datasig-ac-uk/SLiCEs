@@ -487,6 +487,7 @@ def _benchmark_mode_grid(
             continue
 
         for s_idx, seq_len in enumerate(seq_lens):
+            # Random raw path values; SLiCE differences them internally by default.
             x = torch.randn(
                 args.batch_size, seq_len, dim, device=device, dtype=torch.float32
             )

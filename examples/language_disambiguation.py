@@ -333,7 +333,8 @@ def main() -> None:
     x_train, y_train = encode_texts(train_texts, train_labels, vocab, args.max_seq_len)
     x_val, y_val = encode_texts(val_texts, val_labels, vocab, args.max_seq_len)
 
-    # 3) Create model and optimiser.
+    # 3) Create model and optimiser. The default layer stack uses
+    # RMSNorm -> SLiCE -> residual -> GELU MLP -> residual.
     model = StackedSLiCE(
         num_layers=NUM_LAYERS,
         data_dim=len(vocab),
@@ -343,7 +344,6 @@ def main() -> None:
         block_size=BLOCK_SIZE,
         diagonal_dense=False,
         scale=scale,
-        use_glu=True,
         dropout_rate=DROPOUT,
         use_parallel=True,
         chunk_size=128,

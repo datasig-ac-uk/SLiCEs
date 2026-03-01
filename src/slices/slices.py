@@ -6,6 +6,19 @@ import torch
 import torch.nn as nn
 
 
+class RMSNorm(nn.Module):
+    """A minimal RMSNorm used by the default SLiCELayer configuration."""
+
+    def __init__(self, d_model: int, eps: float = 1e-6):
+        super().__init__()
+        self.eps = float(eps)
+        self.weight = nn.Parameter(torch.ones(d_model))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        rms = torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        return (x * rms) * self.weight
+
+
 class SLiCE(nn.Module):
     """
     A structured linear controlled differential equation (SLiCE) recurrence.
@@ -27,6 +40,9 @@ class SLiCE(nn.Module):
                                dense block of size block_size x block_size.
         init_std (float): Standard deviation for vector field initialisation.
         scale (float): Scaling factor applied to the input.
+        path_mode (str): Whether the input is treated as path values
+                         ("values", default) or as increments
+                         ("increments").
 
     Shape:
         - Input: (batch_size, seq_len, input_dim)
@@ -45,11 +61,14 @@ class SLiCE(nn.Module):
         input_dependent_init: bool = False,
         use_parallel: bool = True,
         chunk_size: int = 256,
+        path_mode: str = "values",
     ):
         super().__init__()
 
         if hidden_dim is None:
             hidden_dim = input_dim
+        if path_mode not in {"values", "increments"}:
+            raise ValueError("path_mode must be one of {'values', 'increments'}.")
         if block_size < 1:
             raise ValueError("block_size must be at least 1.")
         if not diagonal_dense and hidden_dim % block_size != 0:
@@ -62,6 +81,7 @@ class SLiCE(nn.Module):
         self.init_std = init_std
         self.scale = scale
         self.input_dependent_init = input_dependent_init
+        self.path_mode = path_mode
 
         self.use_parallel = use_parallel
         if chunk_size < 1:
@@ -135,6 +155,22 @@ class SLiCE(nn.Module):
         if bias:
             self.vf_B = nn.Linear(self.input_dim + 1, self.hidden_dim, bias=False)
             nn.init.normal_(self.vf_B.weight, mean=0.0, std=self.init_std)
+
+    def _prepare_driving_path(self, x: torch.Tensor) -> torch.Tensor:
+        if self.path_mode == "values":
+            return torch.diff(
+                x,
+                dim=1,
+                prepend=torch.zeros_like(x[:, :1, :]),
+            )
+        return x
+
+    def _prepare_augmented_inputs(self, x: torch.Tensor) -> torch.Tensor:
+        path = self._prepare_driving_path(x)
+        inc_ts = torch.ones(
+            path.shape[0], path.shape[1], 1, device=x.device, dtype=x.dtype
+        )
+        return torch.cat((inc_ts, path), dim=-1) * self.scale
 
     # ---- scan kernels: block_size == 1 (elementwise) ----
 
@@ -292,13 +328,7 @@ class SLiCE(nn.Module):
     def _forward_recurrent(self, X: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, in_dim = X.shape
 
-        # Add the increments of a sample counting channel.
-        inc_ts = torch.full(
-            (batch_size, seq_len, 1), 1.0, device=X.device, dtype=X.dtype
-        )
-        inp = torch.cat((inc_ts, X), dim=-1)  # shape: (batch_size, seq_len, x_dim)
-        # Scale the input
-        inp = inp * self.scale
+        inp = self._prepare_augmented_inputs(X)
 
         # Initialise the hidden state
         if self.input_dependent_init:
@@ -373,10 +403,7 @@ class SLiCE(nn.Module):
 
         batch_size, seq_len, _ = X.shape
 
-        inc_ts = torch.full(
-            (batch_size, seq_len, 1), 1.0, device=X.device, dtype=X.dtype
-        )
-        inp = torch.cat((inc_ts, X), dim=-1) * self.scale  # (B, T, D+1)
+        inp = self._prepare_augmented_inputs(X)
 
         if self.input_dependent_init:
             y_start = self.init(X[:, 0, :])
@@ -418,13 +445,24 @@ class SLiCE(nn.Module):
 
 class SLiCELayer(nn.Module):
     """
-    A residual block wrapping a SLiCE. Includes:
-      1. SLiCE forward pass
-      2. Residual connection
-      3. A Linear→GLU (or tanh) stage
-      4. Residual connection
-      5. LayerNorm
-      6. Dropout
+    A residual layer wrapping a SLiCE.
+
+    SLiCELayer defaults to this structure:
+      1. RMSNorm
+      2. SLiCE
+      3. Residual connection
+      4. RMSNorm
+      5. Token MLP with hidden size ff_mult * input_dim and GELU
+      6. Residual connection
+      7. Dropout on each residual branch
+
+    Optional toggles for the LayerNorm + GLU/tanh single-stage wrapper:
+      - norm_type="layernorm"
+      - prenorm=False
+      - ff_style="single"
+      - ff_mult=1
+      - ff_activation="glu" or "tanh"
+      - dropout_position="output"
 
     The output dimension of the SLiCE is the same as the input dimension to preserve
     shape for the residual.
@@ -437,9 +475,21 @@ class SLiCELayer(nn.Module):
         init_std (float): Standard deviation for weight initialisation in the SLiCE.
         use_parallel (bool): Whether the inner SLiCE uses parallel scan execution.
         chunk_size (int): Chunk size used by the inner SLiCE when in parallel mode.
-        dropout_rate (float): Dropout probability applied after the residual addition.
-        use_glu (bool): Whether to apply a Linear -> GLU stage after the residual or
-                            a Linear -> tanh stage.
+        dropout_rate (float): Dropout probability applied either on residual branches
+                              or on the block output, depending on dropout_position.
+        path_mode (str): How the inner SLiCE interprets the input path.
+        norm_type (str): "rmsnorm" or "layernorm". Defaults to "rmsnorm".
+        prenorm (bool): If True, apply normalisation before the SLiCE and
+                        feedforward branches; if False, apply one norm after
+                        both residual updates.
+        ff_style (str): "mlp" for Linear -> activation -> Linear, or
+                        "single" for a single Linear -> activation branch.
+        ff_activation (str): "gelu", "glu", or "tanh".
+        ff_mult (int): Expansion factor for the hidden feedforward size.
+        dropout_position (str): "residual" to drop branch outputs before
+                                residual addition, or "output" to drop the
+                                final layer output.
+        norm_eps (float): Epsilon used by the normalisation layers.
 
     Shape:
         - Input: (batch_size, seq_len, input_dim)
@@ -458,9 +508,35 @@ class SLiCELayer(nn.Module):
         use_parallel: bool = True,
         chunk_size: int = 256,
         dropout_rate: float = 0.01,
-        use_glu: bool = False,
+        path_mode: str = "values",
+        norm_type: str = "rmsnorm",
+        prenorm: bool = True,
+        ff_style: str = "mlp",
+        ff_activation: str = "gelu",
+        ff_mult: int = 4,
+        dropout_position: str = "residual",
+        norm_eps: float = 1e-6,
     ):
         super().__init__()
+        if norm_type not in {"rmsnorm", "layernorm"}:
+            raise ValueError("norm_type must be one of {'rmsnorm', 'layernorm'}.")
+        if ff_style not in {"mlp", "single"}:
+            raise ValueError("ff_style must be one of {'mlp', 'single'}.")
+        if ff_activation not in {"gelu", "glu", "tanh"}:
+            raise ValueError("ff_activation must be one of {'gelu', 'glu', 'tanh'}.")
+        if ff_mult < 1:
+            raise ValueError("ff_mult must be at least 1.")
+        if ff_style == "single" and ff_mult != 1:
+            raise ValueError("ff_mult must be 1 when ff_style='single'.")
+        if dropout_position not in {"residual", "output"}:
+            raise ValueError("dropout_position must be one of {'residual', 'output'}.")
+
+        self.norm_type = norm_type
+        self.prenorm = prenorm
+        self.ff_style = ff_style
+        self.ff_activation = ff_activation
+        self.ff_mult = ff_mult
+        self.dropout_position = dropout_position
         self.slice = SLiCE(
             input_dim=input_dim,
             hidden_dim=None,
@@ -472,30 +548,39 @@ class SLiCELayer(nn.Module):
             input_dependent_init=input_dependent_init,
             use_parallel=use_parallel,
             chunk_size=chunk_size,
+            path_mode=path_mode,
         )
-        self.norm = nn.LayerNorm(input_dim)
-
-        # Linear -> GLU or Linear -> tanh stage
-        self.use_glu = use_glu
-        if self.use_glu:
-            # Expand from input_dim -> 2*input_dim for GLU gating
-            self.linear = nn.Linear(input_dim, 2 * input_dim)
-            self.act = nn.GLU(dim=-1)
-        else:
-            self.linear = nn.Linear(input_dim, input_dim)
-            self.act = lambda x: torch.tanh(x)
 
         self.drop = nn.Dropout(p=dropout_rate)
+        if self.prenorm:
+            if norm_type == "rmsnorm":
+                self.slice_norm = RMSNorm(input_dim, eps=norm_eps)
+                self.ff_norm = RMSNorm(input_dim, eps=norm_eps)
+            else:
+                self.slice_norm = nn.LayerNorm(input_dim, eps=norm_eps)
+                self.ff_norm = nn.LayerNorm(input_dim, eps=norm_eps)
+        else:
+            if norm_type == "rmsnorm":
+                self.norm = RMSNorm(input_dim, eps=norm_eps)
+            else:
+                self.norm = nn.LayerNorm(input_dim, eps=norm_eps)
+
+        ff_hidden_dim = ff_mult * input_dim
+        ff_in_dim = 2 * ff_hidden_dim if ff_activation == "glu" else ff_hidden_dim
+        self.ff_in = nn.Linear(input_dim, ff_in_dim)
+        self.ff_out = (
+            nn.Linear(ff_hidden_dim, input_dim) if ff_style == "mlp" else nn.Identity()
+        )
+        if ff_activation == "gelu":
+            self.act = nn.GELU()
+        elif ff_activation == "glu":
+            self.act = nn.GLU(dim=-1)
+        else:
+            self.act = nn.Tanh()
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass:
-            1. Compute SLiCE on input
-            2. Apply residual skip connection
-            3. Apply Linear -> GLU (or tanh) stage
-            4. Add residual skip connection
-            5. LayerNorm
-            6. Dropout
+        Forward pass for a configurable SLiCELayer.
 
         Args:
             X (torch.Tensor): shape (batch_size, seq_len, input_dim)
@@ -503,26 +588,25 @@ class SLiCELayer(nn.Module):
         Returns:
             torch.Tensor: shape (batch_size, seq_len, input_dim)
         """
-        # Step 1: SLiCE
-        ys = self.slice(X)  # shape: (batch_size, seq_len, input_dim)
+        slice_input = self.slice_norm(X) if self.prenorm else X
+        slice_out = self.slice(slice_input)
+        if self.dropout_position == "residual":
+            X = X + self.drop(slice_out)
+        else:
+            X = X + slice_out
 
-        # Step 2: Residual skip
-        ys = ys + X
+        ff_input = self.ff_norm(X) if self.prenorm else X
+        ff_out = self.ff_out(self.act(self.ff_in(ff_input)))
+        if self.dropout_position == "residual":
+            X = X + self.drop(ff_out)
+        else:
+            X = X + ff_out
 
-        # Step 3: Linear -> GLU (or tanh)
-        ys_lin = self.linear(ys)  # shape: (batch_size, seq_len, 2*input_dim)
-        ys_lin = self.act(ys_lin)  # shape: (batch_size, seq_len, input_dim)
-
-        # Step 4: Residual skip
-        ys = ys + ys_lin
-
-        # Step 5: LayerNorm
-        ys = self.norm(ys)
-
-        # Step 6: Dropout
-        ys = self.drop(ys)
-
-        return ys
+        if not self.prenorm:
+            X = self.norm(X)
+        if self.dropout_position == "output":
+            X = self.drop(X)
+        return X
 
 
 class StackedSLiCE(nn.Module):
@@ -535,17 +619,22 @@ class StackedSLiCE(nn.Module):
         data_dim (int): Dimension of the input.
         hidden_dim (int): Hidden dimension used in each SLiCELayer.
         label_dim (int): Size of the output dimension.
-        block_size (int): The size of the blocks along the diagonal of A in each block.
+        block_size (int): The size of the blocks along the diagonal of A in each layer.
         diagonal_dense (bool): If True, A is composed of a diagonal matrix and a dense
-                               block in each block.
-        init_std (float): Standard deviation for the initialisation in each block.
-        use_parallel (bool): Whether each block's inner SLiCE uses
+                               block in each layer.
+        init_std (float): Standard deviation for the initialisation in each layer.
+        use_parallel (bool): Whether each layer's inner SLiCE uses
                              parallel scan execution.
-        chunk_size (int): Chunk size used by each block's inner SLiCE in parallel mode.
-        dropout_rate (float): Dropout probability applied in each block after the
-                              residual.
-        use_glu (bool): Whether to apply a Linear -> GLU or Linear -> tanh stage after
-                        the residual.
+        chunk_size (int): Chunk size used by each layer's inner SLiCE in parallel mode.
+        dropout_rate (float): Dropout probability applied in each layer.
+        path_mode (str): How each inner SLiCE interprets its input path.
+        norm_type (str): "rmsnorm" or "layernorm" for each stacked layer.
+        prenorm (bool): Whether each stacked layer uses pre-norm.
+        ff_style (str): "mlp" or "single" feedforward branch shape.
+        ff_activation (str): "gelu", "glu", or "tanh".
+        ff_mult (int): Expansion factor for the feedforward hidden size.
+        dropout_position (str): "residual" or "output".
+        norm_eps (float): Epsilon used by the normalisation layers.
 
     Shape:
         - Input: (batch_size, seq_len) if the input is tokens or
@@ -569,7 +658,14 @@ class StackedSLiCE(nn.Module):
         use_parallel: bool = True,
         chunk_size: int = 256,
         dropout_rate: float = 0.01,
-        use_glu: bool = False,
+        path_mode: str = "values",
+        norm_type: str = "rmsnorm",
+        prenorm: bool = True,
+        ff_style: str = "mlp",
+        ff_activation: str = "gelu",
+        ff_mult: int = 4,
+        dropout_position: str = "residual",
+        norm_eps: float = 1e-6,
     ):
         super().__init__()
         self.tokens = tokens
@@ -592,7 +688,14 @@ class StackedSLiCE(nn.Module):
                     use_parallel=use_parallel,
                     chunk_size=chunk_size,
                     dropout_rate=dropout_rate,
-                    use_glu=use_glu,
+                    path_mode=path_mode,
+                    norm_type=norm_type,
+                    prenorm=prenorm,
+                    ff_style=ff_style,
+                    ff_activation=ff_activation,
+                    ff_mult=ff_mult,
+                    dropout_position=dropout_position,
+                    norm_eps=norm_eps,
                 )
                 for _ in range(num_layers)
             ]

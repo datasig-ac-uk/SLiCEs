@@ -10,7 +10,7 @@ $$
 y_i = y_{i-1} + A(X_i)y_{i-1} + B(X_i),
 $$
 
-where $A(\cdot): \mathbb{R}^D \rightarrow \mathbb{R}^{H \times H}$ and $B(\cdot): \mathbb{R}^D \rightarrow \mathbb{R}^H$ are *learned linear maps*, the initial state $y_0$ is either a function of $X_0$ or a learnt vector, and the input is augmented with an extra channel:
+where $A(\cdot): \mathbb{R}^D \rightarrow \mathbb{R}^{H \times H}$ and $B(\cdot): \mathbb{R}^D \rightarrow \mathbb{R}^H$ are *learned linear maps*, the initial state $y_0$ is either a function of $X_0$ or a learnt vector, and the driving path is augmented with an extra channel:
 
 - `inc` = a constant “increment” channel (all ones)
 
@@ -19,6 +19,10 @@ such that
 $$
 X_i = [inc_i, x_i] \in \mathbb{R}^{D+1}.
 $$
+
+By default, `SLiCE` treats the provided sequence as path values and internally
+computes first differences with `torch.diff(..., prepend=zeros)`. Set
+`path_mode="increments"` to treat the provided sequence as increments instead.
 
 ## Installation
 
@@ -35,7 +39,7 @@ pip install git+https://github.com/datasig-ac-uk/slices.git
 ## What's included
 
 - **`SLiCE`**: the core structured recurrence
-- **`SLiCELayer`**: a residual layer wrapping `SLiCE` with a post-activation stage (`GLU` or `tanh`)
+- **`SLiCELayer`**: a residual SLiCE layer with RMSNorm + GELU MLP by default
 - **`StackedSLiCE`**: stacks multiple `SLiCELayer`s with an embedding + output projection (supports tokens or continuous inputs)
 
 `SLiCE` supports both:
@@ -92,6 +96,7 @@ print(y.shape)
 ```
 
 Execution mode is configured via constructor arguments (`use_parallel`, `chunk_size`).
+`path_mode` determines how `SLiCE` treats the sequence you pass in.
 
 ### Use `SLiCELayer` as a residual sequence layer
 
@@ -99,18 +104,28 @@ Execution mode is configured via constructor arguments (`use_parallel`, `chunk_s
 import torch
 from slices import SLiCELayer
 
-x = torch.randn(4, 256, 64)
+x = torch.randn(4, 256, 64)  # (batch, seq, input_dim)
 
 layer = SLiCELayer(
     input_dim=64,
     block_size=4,
     diagonal_dense=True,
-    dropout_rate=0.01,
-    use_glu=True,
 )
 
 y = layer(x)  # (4, 256, 64)
 ```
+
+`SLiCELayer` defaults to this structure:
+- RMSNorm -> SLiCE -> residual
+- RMSNorm -> Linear -> GELU -> Linear -> residual
+
+Optional toggles for the LayerNorm + single-stage wrapper include:
+- `norm_type="layernorm"`
+- `prenorm=False`
+- `ff_style="single"`
+- `ff_mult=1`
+- `ff_activation="glu"` or `ff_activation="tanh"`
+- `dropout_position="output"`
 
 ### Stack layers for a full model
 
@@ -135,7 +150,6 @@ model = StackedSLiCE(
     tokens=True,
     block_size=4,
     diagonal_dense=False,
-    use_glu=True,
 )
 
 logits = model(x)  # (batch, seq_len, vocab_size)
@@ -149,7 +163,7 @@ Uses an `nn.Linear(data_dim, hidden_dim)` front-end.
 import torch
 from slices import StackedSLiCE
 
-x = torch.randn(16, 100, 12)  # (batch, seq, data_dim)
+x = torch.randn(16, 100, 12)  # (batch, seq, input_dim)
 
 model = StackedSLiCE(
     num_layers=3,
@@ -174,7 +188,7 @@ This example:
   **character-level language disambiguation**
 - trains a compact token-mode `StackedSLiCE` end-to-end
 - evaluates validation accuracy every `--eval-every` training steps
-- prints sample predictions so you can inspect model behavior quickly
+- prints sample predictions so you can inspect model behaviour quickly
 
 To run it, first install the example dependencies:
 
@@ -205,6 +219,7 @@ uv run python examples/benchmark_parallel_vs_recurrent.py
 
 This script:
 - benchmarks all four SLiCE matrix modes (`diagonal`, `block_diagonal`, `diagonal_dense`, `dense`)
+- uses the default value-path semantics unless `path_mode="increments"` is set in code
 - prints timing/speedup tables
 - saves a combined 3D plot to `examples/images/parallel_vs_recurrent_speedup_3d_all_modes.png`
 
