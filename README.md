@@ -123,11 +123,9 @@ y = layer(x)  # (4, 256, 64)
 - RMSNorm -> SLiCE -> residual
 - RMSNorm -> Linear -> GELU -> Linear -> residual
 
-Optional wrapper toggles include:
+Optional configuration options include:
 - `prenorm=False`
 - `second_norm=False`
-
-Other configuration options include:
 - `norm_type="layernorm"`
 - `ff_style="single"`
 - `ff_mult=1`
