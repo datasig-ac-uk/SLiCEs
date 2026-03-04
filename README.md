@@ -123,8 +123,9 @@ y = layer(x)  # (4, 256, 64)
 - RMSNorm -> SLiCE -> residual
 - RMSNorm -> Linear -> GELU -> Linear -> residual
 
-To use a post-norm wrapper:
+Optional wrapper toggles include:
 - `prenorm=False`
+- `second_norm=False`
 
 Other configuration options include:
 - `norm_type="layernorm"`

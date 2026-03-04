@@ -484,6 +484,9 @@ class SLiCELayer(nn.Module):
         prenorm (bool): If True, apply normalisation before the SLiCE and
                         feedforward branches; if False, use post-residual
                         normalisation.
+        second_norm (bool): If True, apply the second normalisation around the
+                            feedforward branch; if False, skip that
+                            normalisation.
         ff_style (str): "mlp" for Linear -> activation -> Linear, or
                         "single" for a single Linear -> activation branch.
         ff_activation (str): "gelu", "glu", or "tanh".
@@ -513,6 +516,7 @@ class SLiCELayer(nn.Module):
         path_mode: str = "values",
         norm_type: str = "rmsnorm",
         prenorm: bool = True,
+        second_norm: bool = True,
         ff_style: str = "mlp",
         ff_activation: str = "gelu",
         ff_mult: int = 4,
@@ -535,6 +539,7 @@ class SLiCELayer(nn.Module):
 
         self.norm_type = norm_type
         self.prenorm = prenorm
+        self.second_norm = second_norm
         self.ff_style = ff_style
         self.ff_activation = ff_activation
         self.ff_mult = ff_mult
@@ -556,7 +561,7 @@ class SLiCELayer(nn.Module):
         self.drop = nn.Dropout(p=dropout_rate)
         norm_cls = RMSNorm if norm_type == "rmsnorm" else nn.LayerNorm
         self.norm1 = norm_cls(input_dim, eps=norm_eps)
-        self.norm2 = norm_cls(input_dim, eps=norm_eps)
+        self.norm2 = norm_cls(input_dim, eps=norm_eps) if second_norm else None
 
         ff_hidden_dim = ff_mult * input_dim
         ff_in_dim = 2 * ff_hidden_dim if ff_activation == "glu" else ff_hidden_dim
@@ -595,7 +600,8 @@ class SLiCELayer(nn.Module):
                 slice_out = self.drop(slice_out)
             X = X + slice_out
 
-            ff_out = self.token_mlp(self.norm2(X))
+            ff_input = self.norm2(X) if self.norm2 is not None else X
+            ff_out = self.token_mlp(ff_input)
             if self.dropout_position == "residual":
                 ff_out = self.drop(ff_out)
             X = X + ff_out
@@ -612,7 +618,9 @@ class SLiCELayer(nn.Module):
         ff_out = self.token_mlp(X)
         if self.dropout_position == "residual":
             ff_out = self.drop(ff_out)
-        X = self.norm2(X + ff_out)
+        X = X + ff_out
+        if self.norm2 is not None:
+            X = self.norm2(X)
 
         if self.dropout_position == "output":
             X = self.drop(X)
@@ -640,6 +648,8 @@ class StackedSLiCE(nn.Module):
         path_mode (str): How each inner SLiCE interprets its input path.
         norm_type (str): "rmsnorm" or "layernorm" for each stacked layer.
         prenorm (bool): Whether each stacked layer uses pre-norm.
+        second_norm (bool): Whether each stacked layer uses the second
+                            normalisation around the feedforward branch.
         ff_style (str): "mlp" or "single" feedforward branch shape.
         ff_activation (str): "gelu", "glu", or "tanh".
         ff_mult (int): Expansion factor for the feedforward hidden size.
@@ -671,6 +681,7 @@ class StackedSLiCE(nn.Module):
         path_mode: str = "values",
         norm_type: str = "rmsnorm",
         prenorm: bool = True,
+        second_norm: bool = True,
         ff_style: str = "mlp",
         ff_activation: str = "gelu",
         ff_mult: int = 4,
@@ -701,6 +712,7 @@ class StackedSLiCE(nn.Module):
                     path_mode=path_mode,
                     norm_type=norm_type,
                     prenorm=prenorm,
+                    second_norm=second_norm,
                     ff_style=ff_style,
                     ff_activation=ff_activation,
                     ff_mult=ff_mult,

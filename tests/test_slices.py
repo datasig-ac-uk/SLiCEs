@@ -211,6 +211,7 @@ def test_slice_layer_default_forward_shape():
     y = block(x)
     assert block.norm_type == "rmsnorm"
     assert block.prenorm
+    assert block.second_norm
     assert block.ff_style == "mlp"
     assert block.ff_activation == "gelu"
     assert block.dropout_position == "residual"
@@ -262,6 +263,7 @@ def test_slice_layer_single_stage_toggles_cover_glu_and_tanh(
     y = block(x)
     assert block.norm_type == "layernorm"
     assert not block.prenorm
+    assert block.second_norm
     assert block.ff_style == "single"
     assert block.ff_mult == 1
     assert block.ff_activation == ff_activation
@@ -287,9 +289,33 @@ def test_slice_layer_postnorm_mlp_exposes_dual_norms():
 
     y = block(x)
     assert not block.prenorm
+    assert block.second_norm
     assert block.ff_style == "mlp"
     assert isinstance(block.norm1, slices_module.RMSNorm)
     assert isinstance(block.norm2, slices_module.RMSNorm)
+    assert y.shape == x.shape
+    _assert_no_nan(y)
+
+
+@pytest.mark.parametrize("prenorm", [False, True])
+def test_slice_layer_can_disable_second_norm(prenorm: bool):
+    x = _rand_x(batch=2, seq=4, dim=6, seed=12)
+
+    block = SLiCELayer(
+        input_dim=6,
+        block_size=2,
+        diagonal_dense=False,
+        use_parallel=False,
+        dropout_rate=0.0,
+        prenorm=prenorm,
+        second_norm=False,
+    )
+
+    y = block(x)
+    assert block.prenorm is prenorm
+    assert not block.second_norm
+    assert isinstance(block.norm1, slices_module.RMSNorm)
+    assert block.norm2 is None
     assert y.shape == x.shape
     _assert_no_nan(y)
 
@@ -355,6 +381,34 @@ def test_stacked_slice_continuous_path():
     m.eval()
 
     y = m(x)
+    assert y.shape == (batch, seq, label)
+    _assert_no_nan(y)
+
+
+def test_stacked_slice_propagates_second_norm_toggle():
+    batch, seq = 2, 4
+    data_dim = 6
+    hidden = 8
+    label = 5
+
+    x = _rand_x(batch=batch, seq=seq, dim=data_dim, seed=13)
+
+    m = StackedSLiCE(
+        num_layers=2,
+        data_dim=data_dim,
+        hidden_dim=hidden,
+        label_dim=label,
+        tokens=False,
+        block_size=4,
+        diagonal_dense=False,
+        use_parallel=False,
+        dropout_rate=0.0,
+        second_norm=False,
+    )
+    m.eval()
+
+    y = m(x)
+    assert all(layer.norm2 is None for layer in m.layers)
     assert y.shape == (batch, seq, label)
     _assert_no_nan(y)
 
