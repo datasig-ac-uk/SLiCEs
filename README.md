@@ -119,9 +119,11 @@ y = layer(x)  # (4, 256, 64)
 - RMSNorm -> SLiCE -> residual
 - RMSNorm -> Linear -> GELU -> Linear -> residual
 
+Optional toggle for the post-norm wrapper:
+- `prenorm=False`
+
 Optional toggles for the LayerNorm + single-stage wrapper include:
 - `norm_type="layernorm"`
-- `prenorm=False`
 - `ff_style="single"`
 - `ff_mult=1`
 - `ff_activation="glu"` or `ff_activation="tanh"`
