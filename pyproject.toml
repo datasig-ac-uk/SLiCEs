@@ -1,6 +1,6 @@
 [project]
 name = "torch-slices"
-version = "0.3.0"
+version = "0.3.1"
 description = "Structured Linear CDE (SLiCE) layers for sequence modelling in PyTorch"
 readme = "README.md"
 license = "MIT"

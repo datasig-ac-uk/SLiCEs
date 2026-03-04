@@ -456,9 +456,11 @@ class SLiCELayer(nn.Module):
       6. Residual connection
       7. Dropout on each residual branch
 
+    Optional toggle for the post-norm wrapper:
+      - prenorm=False
+
     Optional toggles for the LayerNorm + GLU/tanh single-stage wrapper:
       - norm_type="layernorm"
-      - prenorm=False
       - ff_style="single"
       - ff_mult=1
       - ff_activation="glu" or "tanh"
@@ -480,8 +482,8 @@ class SLiCELayer(nn.Module):
         path_mode (str): How the inner SLiCE interprets the input path.
         norm_type (str): "rmsnorm" or "layernorm". Defaults to "rmsnorm".
         prenorm (bool): If True, apply normalisation before the SLiCE and
-                        feedforward branches; if False, apply one norm after
-                        both residual updates.
+                        feedforward branches; if False, use post-residual
+                        normalisation.
         ff_style (str): "mlp" for Linear -> activation -> Linear, or
                         "single" for a single Linear -> activation branch.
         ff_activation (str): "gelu", "glu", or "tanh".
@@ -552,31 +554,30 @@ class SLiCELayer(nn.Module):
         )
 
         self.drop = nn.Dropout(p=dropout_rate)
-        if self.prenorm:
-            if norm_type == "rmsnorm":
-                self.slice_norm = RMSNorm(input_dim, eps=norm_eps)
-                self.ff_norm = RMSNorm(input_dim, eps=norm_eps)
-            else:
-                self.slice_norm = nn.LayerNorm(input_dim, eps=norm_eps)
-                self.ff_norm = nn.LayerNorm(input_dim, eps=norm_eps)
-        else:
-            if norm_type == "rmsnorm":
-                self.norm = RMSNorm(input_dim, eps=norm_eps)
-            else:
-                self.norm = nn.LayerNorm(input_dim, eps=norm_eps)
+        norm_cls = RMSNorm if norm_type == "rmsnorm" else nn.LayerNorm
+        self.norm1 = norm_cls(input_dim, eps=norm_eps)
+        self.norm2 = norm_cls(input_dim, eps=norm_eps)
 
         ff_hidden_dim = ff_mult * input_dim
         ff_in_dim = 2 * ff_hidden_dim if ff_activation == "glu" else ff_hidden_dim
-        self.ff_in = nn.Linear(input_dim, ff_in_dim)
-        self.ff_out = (
-            nn.Linear(ff_hidden_dim, input_dim) if ff_style == "mlp" else nn.Identity()
-        )
         if ff_activation == "gelu":
-            self.act = nn.GELU()
+            activation = nn.GELU()
         elif ff_activation == "glu":
-            self.act = nn.GLU(dim=-1)
+            activation = nn.GLU(dim=-1)
         else:
-            self.act = nn.Tanh()
+            activation = nn.Tanh()
+
+        if ff_style == "mlp":
+            self.token_mlp = nn.Sequential(
+                nn.Linear(input_dim, ff_in_dim),
+                activation,
+                nn.Linear(ff_hidden_dim, input_dim),
+            )
+        else:
+            self.token_mlp = nn.Sequential(
+                nn.Linear(input_dim, ff_in_dim),
+                activation,
+            )
 
     def forward(self, X: torch.Tensor) -> torch.Tensor:
         """
@@ -588,22 +589,31 @@ class SLiCELayer(nn.Module):
         Returns:
             torch.Tensor: shape (batch_size, seq_len, input_dim)
         """
-        slice_input = self.slice_norm(X) if self.prenorm else X
-        slice_out = self.slice(slice_input)
-        if self.dropout_position == "residual":
-            X = X + self.drop(slice_out)
-        else:
+        if self.prenorm:
+            slice_out = self.slice(self.norm1(X))
+            if self.dropout_position == "residual":
+                slice_out = self.drop(slice_out)
             X = X + slice_out
 
-        ff_input = self.ff_norm(X) if self.prenorm else X
-        ff_out = self.ff_out(self.act(self.ff_in(ff_input)))
-        if self.dropout_position == "residual":
-            X = X + self.drop(ff_out)
-        else:
+            ff_out = self.token_mlp(self.norm2(X))
+            if self.dropout_position == "residual":
+                ff_out = self.drop(ff_out)
             X = X + ff_out
 
-        if not self.prenorm:
-            X = self.norm(X)
+            if self.dropout_position == "output":
+                X = self.drop(X)
+            return X
+
+        slice_out = self.slice(X)
+        if self.dropout_position == "residual":
+            slice_out = self.drop(slice_out)
+        X = self.norm1(X + slice_out)
+
+        ff_out = self.token_mlp(X)
+        if self.dropout_position == "residual":
+            ff_out = self.drop(ff_out)
+        X = self.norm2(X + ff_out)
+
         if self.dropout_position == "output":
             X = self.drop(X)
         return X

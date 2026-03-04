@@ -214,6 +214,8 @@ def test_slice_layer_default_forward_shape():
     assert block.ff_style == "mlp"
     assert block.ff_activation == "gelu"
     assert block.dropout_position == "residual"
+    assert isinstance(block.norm1, slices_module.RMSNorm)
+    assert isinstance(block.norm2, slices_module.RMSNorm)
     assert y.shape == x.shape
     _assert_no_nan(y)
 
@@ -264,6 +266,30 @@ def test_slice_layer_single_stage_toggles_cover_glu_and_tanh(
     assert block.ff_mult == 1
     assert block.ff_activation == ff_activation
     assert block.dropout_position == "output"
+    assert isinstance(block.norm1, torch.nn.LayerNorm)
+    assert isinstance(block.norm2, torch.nn.LayerNorm)
+    assert y.shape == x.shape
+    _assert_no_nan(y)
+
+
+def test_slice_layer_postnorm_mlp_exposes_dual_norms():
+    x = _rand_x(batch=2, seq=4, dim=6, seed=11)
+
+    block = SLiCELayer(
+        input_dim=6,
+        block_size=2,
+        diagonal_dense=False,
+        use_parallel=False,
+        dropout_rate=0.0,
+        prenorm=False,
+        ff_style="mlp",
+    )
+
+    y = block(x)
+    assert not block.prenorm
+    assert block.ff_style == "mlp"
+    assert isinstance(block.norm1, slices_module.RMSNorm)
+    assert isinstance(block.norm2, slices_module.RMSNorm)
     assert y.shape == x.shape
     _assert_no_nan(y)
 
