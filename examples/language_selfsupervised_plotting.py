@@ -43,7 +43,7 @@ print(f"Loaded embeddings: N={N}, T={T}, D={D}, dtype={dtype}")
 
 # Time indices relative to the end of the sequence
 # -1 = H_{T-1}, -2 = H_{T-2}, etc.
-TIME_INDICES = [0,20,100,-5,-2,-1]
+TIME_INDICES = [0, 20, 100, -5, -2, -1]
 
 LABELS = [
     (0, "English", "tab:blue"),
