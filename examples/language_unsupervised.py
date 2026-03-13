@@ -25,7 +25,6 @@ import torch.nn.functional as F
 
 from slices import StackedSLiCE
 
-
 # ---------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------
@@ -202,7 +201,7 @@ class SelfSupervisedSLiCE(nn.Module):
             horizons = MULTI_HORIZONS
 
         total = 0.0
-        for out, k in zip(outputs, horizons):
+        for out, k in zip(outputs, horizons, strict=True):
             # Align predictions and targets
             readout = out[:, :-k]
             tgt = targets[:, k - 1 :]

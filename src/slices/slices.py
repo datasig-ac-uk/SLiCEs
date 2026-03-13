@@ -636,7 +636,8 @@ class StackedSLiCE(nn.Module):
         num_layers (int): Number of SLiCELayers to stack.
         data_dim (int): Dimension of the input.
         hidden_dim (int): Hidden dimension used in each SLiCELayer.
-        label_dim (int | tuple[int, ...]): Size of the output dimension (tuple for multi-head).
+        label_dim (int | tuple[int, ...]): Size of the output dimension,
+                                           tuple of int for multi-head).
         block_size (int): The size of the blocks along the diagonal of A in each layer.
         diagonal_dense (bool): If True, A is composed of a diagonal matrix and a dense
                                block in each layer.
@@ -727,7 +728,8 @@ class StackedSLiCE(nn.Module):
         self.label_dim = label_dim
         if isinstance(label_dim, int):
             self.linear = nn.Linear(hidden_dim, label_dim)
-        elif isinstance(label_dim, tuple) and all(isinstance(x, int) for x in label_dim):
+        elif isinstance(label_dim, tuple):
+            assert all(isinstance(x, int) for x in label_dim)
             self.linear = nn.ModuleList(
                 [nn.Linear(hidden_dim, d) for d in label_dim]
             )

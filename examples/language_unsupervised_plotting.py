@@ -7,11 +7,10 @@ Assumes:
   - time index is relative to the *end* of the sequence
 """
 
-import numpy as np
 import cupy as cp
-from cuml.manifold import UMAP
 import matplotlib.pyplot as plt
-
+import numpy as np
+from cuml.manifold import UMAP
 
 # ---------------------------------------------------------------------
 # Load embeddings + metadata
@@ -76,7 +75,7 @@ axs = axs.flatten()
 # Main loop
 # ---------------------------------------------------------------------
 
-for ax, t in zip(axs, TIME_INDICES):
+for ax, t in zip(axs, TIME_INDICES, strict=True):
     if not (-T <= t < T):
         raise IndexError(f"time index {t} out of range for T={T}")
 
