@@ -730,12 +730,9 @@ class StackedSLiCE(nn.Module):
             self.linear = nn.Linear(hidden_dim, label_dim)
         elif isinstance(label_dim, tuple):
             assert all(isinstance(x, int) for x in label_dim)
-            self.linear = nn.ModuleList(
-                [nn.Linear(hidden_dim, d) for d in label_dim]
-            )
+            self.linear = nn.ModuleList([nn.Linear(hidden_dim, d) for d in label_dim])
         else:
             raise TypeError("label_dim must be int or tuple of int")
-        
 
     def hidden(self, X: torch.Tensor) -> torch.Tensor:
         """
@@ -782,4 +779,3 @@ class StackedSLiCE(nn.Module):
         if isinstance(self.linear, nn.ModuleList):
             return [head(X) for head in self.linear]
         return self.linear(X)
-

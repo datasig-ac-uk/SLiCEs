@@ -38,6 +38,7 @@ MULTI_HORIZONS = (1, 2, 4)
 # Argument parsing
 # ---------------------------------------------------------------------
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train SLiCE and export hidden states")
 
@@ -80,6 +81,7 @@ def parse_args() -> argparse.Namespace:
 # Utilities
 # ---------------------------------------------------------------------
 
+
 def set_seed(seed: int) -> None:
     random.seed(seed)
     torch.manual_seed(seed)
@@ -94,6 +96,7 @@ def normalise(text: str) -> str:
 # ---------------------------------------------------------------------
 # Dataset helpers
 # ---------------------------------------------------------------------
+
 
 def collect_wikipedia_texts(
     config: str, *, needed: int, seed: int, cache_dir: str
@@ -129,9 +132,7 @@ def build_vocab(texts: list[str]) -> dict[str, int]:
     return {tok: i for i, tok in enumerate(vocab)}
 
 
-def encode_texts(
-    texts: list[str], vocab: dict[str, int], max_len: int
-) -> torch.Tensor:
+def encode_texts(texts: list[str], vocab: dict[str, int], max_len: int) -> torch.Tensor:
     pad, bos, eos, unk = (
         vocab["<pad>"],
         vocab["<bos>"],
@@ -155,6 +156,7 @@ def encode_texts(
 # ---------------------------------------------------------------------
 # Model wrapper
 # ---------------------------------------------------------------------
+
 
 class SelfSupervisedSLiCE(nn.Module):
     """
@@ -222,9 +224,8 @@ class SelfSupervisedSLiCE(nn.Module):
 # Export helpers
 # ---------------------------------------------------------------------
 
-def extract_final(
-    states: torch.Tensor, x: torch.Tensor, pad_id: int
-) -> torch.Tensor:
+
+def extract_final(states: torch.Tensor, x: torch.Tensor, pad_id: int) -> torch.Tensor:
     """
     Extract the last valid hidden state H_{T-1} for each sequence.
     """
@@ -318,6 +319,7 @@ def export_states_memmap(
 # ---------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------
+
 
 def main() -> None:
     args = parse_args()
