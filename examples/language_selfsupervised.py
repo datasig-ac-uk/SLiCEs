@@ -34,7 +34,8 @@ DEFAULT_TIME_INDICES = "1,20,100,-5,-1,0"
 EXAMPLE_DIR = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_DIR = EXAMPLE_DIR / "outputs" / "language_selfsupervised"
 DEFAULT_EXPORT_PATH = DEFAULT_OUTPUT_DIR / "slice_embeddings"
-DEFAULT_PLOT_PATH = DEFAULT_OUTPUT_DIR / "slice_hidden_umap.png"
+DEFAULT_IMAGE_DIR = EXAMPLE_DIR / "images"
+DEFAULT_PLOT_PATH = DEFAULT_IMAGE_DIR / "language_selfsupervised_hidden_umap.png"
 
 
 def parse_args() -> argparse.Namespace:
@@ -538,6 +539,9 @@ def main() -> None:
     cache_dir = None if args.cache_dir is None else str(Path(args.cache_dir))
     if cache_dir is not None:
         Path(cache_dir).mkdir(parents=True, exist_ok=True)
+    Path(args.export_path).parent.mkdir(parents=True, exist_ok=True)
+    if args.plot_umap:
+        Path(args.plot_path).parent.mkdir(parents=True, exist_ok=True)
 
     texts, labels = load_wikipedia_en_fr(
         args.n_per_lang,
