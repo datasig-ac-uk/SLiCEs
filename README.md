@@ -213,6 +213,45 @@ Useful flags:
 - `--train-size 12000 --val-size 3000`
 - `--max-seq-len 192`
 
+## Self-Supervised Example
+
+`examples/language_selfsupervised.py` uses the same streaming Wikipedia data loader,
+trains a self-supervised token model, exports hidden states to a memmap, and can
+optionally plot UMAP projections from those exports.
+
+Generated artifacts are written under `examples/outputs/language_selfsupervised/`
+by default.
+
+Install the example dependencies:
+
+```bash
+uv sync --group examples
+```
+
+Train, export, and plot with the default CPU UMAP backend:
+
+```bash
+uv run python examples/language_selfsupervised.py --plot-umap
+```
+
+To use the CUDA UMAP backend in the project environment:
+
+```bash
+uv sync --group examples --group cuda-umap
+uv run python examples/language_selfsupervised.py --device cuda --plot-umap --umap-backend cuda
+```
+
+Useful flags:
+- `--horizon single|multi`
+- `--export-mode all|final`
+- `--plot-umap`
+- `--umap-backend auto|cpu|cuda`
+- `--plot-time-indices 1,20,100,-5,-1,0` where `0` means `H_T`, the hidden state after consuming `EOS` and aligned with the first `PAD` target; negative indices are relative to that point, and positive indices are one-indexed absolute timesteps
+- `--n-per-lang 4000`
+
+The CUDA UMAP path is optional. `--umap-backend auto` falls back to CPU UMAP if the
+CUDA packages are unavailable.
+
 ## Benchmarking
 
 To compare recurrent and parallel throughput across sequence lengths and hidden dimensions:
@@ -237,7 +276,7 @@ uv sync --dev
 
 - Python ≥ 3.11
 - PyTorch ≥ 2.8.0
-- NumPy ≥ 2.4.1
+- NumPy ≥ 2
 
 ## License
 

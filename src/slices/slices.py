@@ -660,7 +660,8 @@ class StackedSLiCE(nn.Module):
     Shape:
         - Input: (batch_size, seq_len) if the input is tokens or
                  (batch_size, seq_len, data_dim) if the input is time-series values.
-        - Output: (batch_size, seq_len, label_dim)
+        - Output: (batch_size, seq_len, label_dim) for scalar label_dim, or
+                 list[(batch_size, seq_len, d)] for tuple label_dim.
     """
 
     def __init__(
@@ -759,7 +760,7 @@ class StackedSLiCE(nn.Module):
 
         return X
 
-    def forward(self, X: torch.Tensor) -> torch.Tensor:
+    def forward(self, X: torch.Tensor) -> torch.Tensor | list[torch.Tensor]:
         """
         Forward pass of the stacked model:
             1. Embed input X
@@ -771,7 +772,8 @@ class StackedSLiCE(nn.Module):
                               If time-series, shape (batch_size, seq_len, data_dim)
 
         Returns:
-            torch.Tensor: shape (batch_size, seq_len, label_dim)
+            torch.Tensor | list[torch.Tensor]: tensor output for scalar label_dim,
+            or one tensor per head when label_dim is a tuple.
         """
         X = self.hidden(X)
 

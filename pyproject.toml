@@ -26,7 +26,7 @@ classifiers = [
 
 dependencies = [
     "torch>=2.8.0",
-    "numpy>=2.4.1",
+    "numpy>=2",
 ]
 
 [dependency-groups]
@@ -38,6 +38,12 @@ dev = [
 ]
 examples = [
     "datasets>=2.20.0",
+    "matplotlib>=3.8.0",
+    "umap-learn>=0.5.7",
+]
+cuda-umap = [
+    "cupy-cuda12x>=14.0.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "cuml-cu12>=26.2.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 [project.urls]
