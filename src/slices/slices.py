@@ -636,7 +636,8 @@ class StackedSLiCE(nn.Module):
         num_layers (int): Number of SLiCELayers to stack.
         data_dim (int): Dimension of the input.
         hidden_dim (int): Hidden dimension used in each SLiCELayer.
-        label_dim (int): Size of the output dimension.
+        label_dim (int | tuple[int, ...]): Size of the output dimension,
+                                           tuple of int for multi-head).
         block_size (int): The size of the blocks along the diagonal of A in each layer.
         diagonal_dense (bool): If True, A is composed of a diagonal matrix and a dense
                                block in each layer.
@@ -659,7 +660,8 @@ class StackedSLiCE(nn.Module):
     Shape:
         - Input: (batch_size, seq_len) if the input is tokens or
                  (batch_size, seq_len, data_dim) if the input is time-series values.
-        - Output: (batch_size, seq_len, label_dim)
+        - Output: (batch_size, seq_len, label_dim) for scalar label_dim, or
+                 list[(batch_size, seq_len, d)] for tuple label_dim.
     """
 
     def __init__(
@@ -667,7 +669,7 @@ class StackedSLiCE(nn.Module):
         num_layers: int,
         data_dim: int,
         hidden_dim: int,
-        label_dim: int,
+        label_dim: int | tuple[int, ...],
         bias: bool = True,
         tokens: bool = True,
         block_size: int = 4,
@@ -724,21 +726,27 @@ class StackedSLiCE(nn.Module):
         )
 
         # Final projection: from hidden_dim -> label_dim
-        self.linear = nn.Linear(hidden_dim, label_dim)
+        self.label_dim = label_dim
+        if isinstance(label_dim, int):
+            self.linear = nn.Linear(hidden_dim, label_dim)
+        elif isinstance(label_dim, tuple):
+            assert all(isinstance(x, int) for x in label_dim)
+            self.linear = nn.ModuleList([nn.Linear(hidden_dim, d) for d in label_dim])
+        else:
+            raise TypeError("label_dim must be int or tuple of int")
 
-    def forward(self, X: torch.Tensor) -> torch.Tensor:
+    def hidden(self, X: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass of the stacked model:
+        Forward pass of the stacked model without final linear projection:
             1. Embed input X
             2. Pass through each SLiCE layer
-            3. Apply final linear projection
 
         Args:
             X (torch.Tensor): If tokens, shape (batch_size, seq_len)
                               If time-series, shape (batch_size, seq_len, data_dim)
 
         Returns:
-            torch.Tensor: shape (batch_size, seq_len, label_dim)
+            torch.Tensor: shape (batch_size, seq_len, hidden_dim)
         """
         # Step 1: Embedding
         if self.tokens:
@@ -750,5 +758,26 @@ class StackedSLiCE(nn.Module):
         for layer in self.layers:
             X = layer(X)  # (batch_size, seq_len, hidden_dim)
 
+        return X
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor | list[torch.Tensor]:
+        """
+        Forward pass of the stacked model:
+            1. Embed input X
+            2. Pass through each SLiCE layer
+            3. Apply final linear projection
+
+        Args:
+            X (torch.Tensor): If tokens, shape (batch_size, seq_len)
+                              If time-series, shape (batch_size, seq_len, data_dim)
+
+        Returns:
+            torch.Tensor | list[torch.Tensor]: tensor output for scalar label_dim,
+            or one tensor per head when label_dim is a tuple.
+        """
+        X = self.hidden(X)
+
         # Step 3: Project to label_dim
-        return self.linear(X)  # (batch_size, seq_len, label_dim)
+        if isinstance(self.linear, nn.ModuleList):
+            return [head(X) for head in self.linear]
+        return self.linear(X)

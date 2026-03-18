@@ -413,6 +413,77 @@ def test_stacked_slice_propagates_second_norm_toggle():
     _assert_no_nan(y)
 
 
+def test_stacked_slice_hidden_matches_forward_pre_projection():
+    batch, seq = 2, 5
+    vocab = 11
+    hidden = 8
+    label = 3
+
+    x = torch.randint(low=0, high=vocab, size=(batch, seq))
+
+    m = StackedSLiCE(
+        num_layers=2,
+        data_dim=vocab,
+        hidden_dim=hidden,
+        label_dim=label,
+        tokens=True,
+        block_size=4,
+        diagonal_dense=False,
+        use_parallel=False,
+        dropout_rate=0.0,
+    )
+    m.eval()
+
+    hidden_states = m.hidden(x)
+    y = m(x)
+
+    assert hidden_states.shape == (batch, seq, hidden)
+    torch.testing.assert_close(y, m.linear(hidden_states))
+
+
+def test_stacked_slice_multihead_outputs_match_hidden_projection():
+    batch, seq = 2, 4
+    data_dim = 6
+    hidden = 8
+    label_dims = (3, 5, 7)
+
+    x = _rand_x(batch=batch, seq=seq, dim=data_dim, seed=15)
+
+    m = StackedSLiCE(
+        num_layers=2,
+        data_dim=data_dim,
+        hidden_dim=hidden,
+        label_dim=label_dims,
+        tokens=False,
+        block_size=4,
+        diagonal_dense=True,
+        use_parallel=False,
+        dropout_rate=0.0,
+    )
+    m.eval()
+
+    hidden_states = m.hidden(x)
+    outputs = m(x)
+
+    assert isinstance(outputs, list)
+    assert len(outputs) == len(label_dims)
+    for out, head, label_dim in zip(outputs, m.linear, label_dims, strict=True):
+        assert out.shape == (batch, seq, label_dim)
+        torch.testing.assert_close(out, head(hidden_states))
+
+
+def test_stacked_slice_rejects_invalid_label_dim_type():
+    with pytest.raises(TypeError, match="label_dim must be int or tuple of int"):
+        StackedSLiCE(
+            num_layers=1,
+            data_dim=4,
+            hidden_dim=8,
+            label_dim=[3, 5],
+            tokens=True,
+            use_parallel=False,
+        )
+
+
 def test_slice_increments_mode_preserves_direct_input_behaviour():
     """
     Hand calculated example with input_dim=2 so augmented inp has 3 channels:
