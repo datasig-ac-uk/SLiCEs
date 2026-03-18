@@ -217,6 +217,7 @@ __marimo__/
 
 # Benchmark output images
 examples/images/
+examples/outputs/
 
 # Local training outputs and checkpoints
 runs/
