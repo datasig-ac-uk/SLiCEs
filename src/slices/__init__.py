@@ -12,5 +12,5 @@ Main components:
 
 from slices.slices import SLiCE, SLiCELayer, StackedSLiCE
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 __all__ = ["SLiCE", "SLiCELayer", "StackedSLiCE"]

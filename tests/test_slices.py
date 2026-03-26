@@ -1,3 +1,5 @@
+import math
+
 import pytest
 import torch
 
@@ -41,13 +43,21 @@ def test_slice_raises_if_path_mode_is_invalid():
         SLiCE(input_dim=3, hidden_dim=3, path_mode="not-a-mode")
 
 
+def test_slice_raises_if_transition_mode_is_invalid():
+    with pytest.raises(ValueError, match="transition_mode must be one of"):
+        SLiCE(input_dim=3, hidden_dim=3, transition_mode="not-a-mode")
+
+
 # -----------------------
 # SLiCE: forward paths
 # -----------------------
 
 
+@pytest.mark.parametrize("transition_mode", ["euler", "matrix_exp"])
 @pytest.mark.parametrize("use_parallel", [False, True])
-def test_slice_values_mode_matches_manual_external_differencing(use_parallel: bool):
+def test_slice_values_mode_matches_manual_external_differencing(
+    use_parallel: bool, transition_mode: str
+):
     x = _rand_x(batch=2, seq=6, dim=4, seed=1)
     dx = torch.diff(x, dim=1, prepend=torch.zeros_like(x[:, :1, :]))
 
@@ -59,6 +69,7 @@ def test_slice_values_mode_matches_manual_external_differencing(use_parallel: bo
         bias=True,
         use_parallel=use_parallel,
         chunk_size=2,
+        transition_mode=transition_mode,
     )
     m_values = SLiCE(**kwargs, path_mode="values")
     m_increments = SLiCE(**kwargs, path_mode="increments")
@@ -134,6 +145,160 @@ def test_slice_forward_diagonal_dense_bias_true_with_grads():
     assert m.vf_A_diag.weight.grad is not None
     assert m.vf_A_dense.weight.grad is not None
     _assert_grads_exist(m)
+
+
+@pytest.mark.parametrize("use_parallel", [False, True])
+def test_slice_matrix_exp_matches_manual_blockdiag_reference(use_parallel: bool):
+    m = SLiCE(
+        input_dim=1,
+        hidden_dim=2,
+        block_size=2,
+        diagonal_dense=False,
+        bias=False,
+        scale=1.0,
+        use_parallel=use_parallel,
+        chunk_size=2,
+        path_mode="increments",
+        transition_mode="matrix_exp",
+    )
+    m.eval()
+
+    init_vec = torch.tensor([1.0, -0.5], dtype=torch.float32)
+    base_A = torch.tensor([[0.2, -0.1], [0.05, 0.3]], dtype=torch.float32)
+
+    with torch.no_grad():
+        m.init.copy_(init_vec.reshape_as(m.init))
+        m.vf_A.weight.zero_()
+        m.vf_A.weight[:, 1].copy_(base_A.reshape(-1))
+
+    X = torch.tensor([[[0.2], [-0.1], [0.05]]], dtype=torch.float32)
+
+    y = init_vec
+    expected_states = []
+    for scale in X[0, :, 0]:
+        y = torch.matrix_exp(scale * base_A) @ y
+        expected_states.append(y)
+    expected = torch.stack(expected_states)
+
+    Y = m(X)[0]
+
+    assert Y.shape == expected.shape
+    torch.testing.assert_close(Y, expected, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize("use_parallel", [False, True])
+def test_slice_matrix_exp_scalar_time_increments_produce_exact_rotation(
+    use_parallel: bool,
+):
+    """
+    Use a 1D time-increment input with A(dt) = dt * 2π [[0, -1], [1, 0]].
+
+    For dt = 1/4, exp(A(dt)) is an exact 90-degree counter-clockwise rotation, so
+    starting from [1, 0] we should visit the unit circle axes exactly.
+    """
+
+    m = SLiCE(
+        input_dim=1,
+        hidden_dim=2,
+        block_size=2,
+        diagonal_dense=False,
+        bias=False,
+        scale=1.0,
+        use_parallel=use_parallel,
+        chunk_size=2,
+        path_mode="increments",
+        transition_mode="matrix_exp",
+    )
+    m.eval()
+
+    rotation_generator = torch.tensor(
+        [[0.0, -2.0 * math.pi], [2.0 * math.pi, 0.0]], dtype=torch.float32
+    )
+
+    with torch.no_grad():
+        m.init.copy_(torch.tensor([1.0, 0.0], dtype=torch.float32))
+        m.vf_A.weight.zero_()
+        # Augmented input channels are [inc_ts, dt]. Use only dt.
+        m.vf_A.weight[:, 1].copy_(rotation_generator.reshape(-1))
+
+    X = torch.full((1, 4, 1), 0.25, dtype=torch.float32)
+    expected = torch.tensor(
+        [
+            [0.0, 1.0],
+            [-1.0, 0.0],
+            [0.0, -1.0],
+            [1.0, 0.0],
+        ],
+        dtype=torch.float32,
+    )
+
+    Y = m(X)[0]
+
+    assert Y.shape == expected.shape
+    torch.testing.assert_close(Y, expected, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize("use_parallel", [False, True])
+def test_slice_euler_scalar_time_increments_do_not_match_exact_rotation(
+    use_parallel: bool,
+):
+    """
+    The same 1D time-increment rotation setup as above, but using the Euler
+    discretisation. This should follow the explicit Euler update, not the exact
+    quarter-turn rotation.
+    """
+
+    m = SLiCE(
+        input_dim=1,
+        hidden_dim=2,
+        block_size=2,
+        diagonal_dense=False,
+        bias=False,
+        scale=1.0,
+        use_parallel=use_parallel,
+        chunk_size=2,
+        path_mode="increments",
+        transition_mode="euler",
+    )
+    m.eval()
+
+    rotation_generator = torch.tensor(
+        [[0.0, -2.0 * math.pi], [2.0 * math.pi, 0.0]], dtype=torch.float32
+    )
+
+    with torch.no_grad():
+        m.init.copy_(torch.tensor([1.0, 0.0], dtype=torch.float32))
+        m.vf_A.weight.zero_()
+        # Augmented input channels are [inc_ts, dt]. Use only dt.
+        m.vf_A.weight[:, 1].copy_(rotation_generator.reshape(-1))
+
+    X = torch.full((1, 4, 1), 0.25, dtype=torch.float32)
+    exact_rotation = torch.tensor(
+        [
+            [0.0, 1.0],
+            [-1.0, 0.0],
+            [0.0, -1.0],
+            [1.0, 0.0],
+        ],
+        dtype=torch.float32,
+    )
+    # Hand-computed explicit Euler states for
+    # (I + (pi / 2) * [[0, -1], [1, 0]]) applied four times to [1, 0].
+    expected_euler = torch.tensor(
+        [
+            [1.0, 1.5707963267948966],
+            [-1.4674011002723395, 3.141592653589793],
+            [-6.4022033008170185, 0.8366043953472126],
+            [-7.716338412008886, -9.219953032970322],
+        ],
+        dtype=torch.float32,
+    )
+
+    Y = m(X)[0]
+
+    assert Y.shape == exact_rotation.shape
+    torch.testing.assert_close(Y, expected_euler, rtol=1e-5, atol=1e-6)
+    assert not torch.allclose(Y, exact_rotation, rtol=1e-3, atol=1e-3)
 
 
 def test_slice_parallel_falls_back_when_associative_scan_is_unavailable(monkeypatch):
@@ -413,6 +578,30 @@ def test_stacked_slice_propagates_second_norm_toggle():
     _assert_no_nan(y)
 
 
+def test_stacked_slice_propagates_transition_mode():
+    x = _rand_x(batch=2, seq=4, dim=6, seed=16)
+
+    m = StackedSLiCE(
+        num_layers=2,
+        data_dim=6,
+        hidden_dim=8,
+        label_dim=5,
+        tokens=False,
+        block_size=4,
+        diagonal_dense=False,
+        use_parallel=False,
+        dropout_rate=0.0,
+        transition_mode="matrix_exp",
+    )
+    m.eval()
+
+    y = m(x)
+
+    assert all(layer.slice.transition_mode == "matrix_exp" for layer in m.layers)
+    assert y.shape == (2, 4, 5)
+    _assert_no_nan(y)
+
+
 def test_stacked_slice_hidden_matches_forward_pre_projection():
     batch, seq = 2, 5
     vocab = 11
@@ -632,6 +821,7 @@ def test_slice_increments_mode_preserves_direct_input_behaviour_parallel():
 
 
 @pytest.mark.parametrize("bias", [False, True])
+@pytest.mark.parametrize("transition_mode", ["euler", "matrix_exp"])
 @pytest.mark.parametrize(
     "cfg",
     [
@@ -646,10 +836,23 @@ def test_slice_increments_mode_preserves_direct_input_behaviour_parallel():
     ],
 )
 @pytest.mark.parametrize("chunk_size", [1, 2, 8])
-def test_slice_parallel_matches_recurrent(cfg, bias: bool, chunk_size: int):
+def test_slice_parallel_matches_recurrent(
+    cfg, bias: bool, transition_mode: str, chunk_size: int
+):
     x = _rand_x(batch=2, seq=7, dim=cfg["input_dim"], seed=11)
-    m_recurrent = SLiCE(**cfg, bias=bias, use_parallel=False)
-    m_parallel = SLiCE(**cfg, bias=bias, use_parallel=True, chunk_size=chunk_size)
+    m_recurrent = SLiCE(
+        **cfg,
+        bias=bias,
+        use_parallel=False,
+        transition_mode=transition_mode,
+    )
+    m_parallel = SLiCE(
+        **cfg,
+        bias=bias,
+        use_parallel=True,
+        chunk_size=chunk_size,
+        transition_mode=transition_mode,
+    )
     m_parallel.load_state_dict(m_recurrent.state_dict())
 
     y_recurrent = m_recurrent(x)
@@ -670,6 +873,7 @@ def test_slice_parallel_with_input_dependent_init_matches_recurrent():
         bias=True,
         input_dependent_init=True,
         use_parallel=False,
+        transition_mode="matrix_exp",
     )
     m_parallel = SLiCE(
         input_dim=4,
@@ -680,6 +884,7 @@ def test_slice_parallel_with_input_dependent_init_matches_recurrent():
         input_dependent_init=True,
         use_parallel=True,
         chunk_size=3,
+        transition_mode="matrix_exp",
     )
     m_parallel.load_state_dict(m_recurrent.state_dict())
 
