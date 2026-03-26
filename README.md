@@ -26,6 +26,8 @@ $$
 By default, `SLiCE` treats the provided sequence as path values and internally
 computes first differences with `torch.diff(..., prepend=zeros)`. Set
 `path_mode="increments"` to treat the provided sequence as increments instead.
+By default, each step uses the first-order Euler update `I + A(X_i)`. Set
+`transition_mode="matrix_exp"` to use `exp(A(X_i))` instead.
 
 ## Installation
 
@@ -101,6 +103,8 @@ print(y.shape)
 
 Execution mode is controlled by `use_parallel` and `chunk_size`.
 `path_mode` determines whether the input sequence is interpreted as path values or increments.
+`transition_mode` selects between the default Euler step and a matrix-exponential
+transition.
 
 ### Use `SLiCELayer` as a residual sequence layer
 
